@@ -1,0 +1,24 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.0] - 2025-02-24
+
+### Added
+
+- Unified CLI combining Claude Code, Gemini CLI, and Cursor IDE metering tools
+- Three binary entry points: `revenium-metering` (Claude Code), `revenium-gemini` (Gemini CLI), `revenium-cursor` (Cursor IDE)
+- Claude Code CLI with `setup`, `status`, `test`, and `backfill` commands
+- Gemini CLI with `setup`, `status`, and `test` commands
+- Cursor CLI with `setup`, `status`, `test`, `sync`, `reset`, and `backfill` commands
+- Interactive setup wizard with shell profile auto-update for Claude Code and Gemini
+- Cursor sync engine with deduplication, state management, and continuous watch mode
+- Shared core infrastructure (`_core`) with OTLP client, config validation, shell detection, escaping, and PII masking
+- Programmatic API exports for validation, OTLP sending, health checks, masking, and shell detection
+- OTLP telemetry format for usage data transmission
+- 106 unit and integration tests
+
+[1.0.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.0

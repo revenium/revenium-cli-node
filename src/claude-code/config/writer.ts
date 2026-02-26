@@ -1,0 +1,90 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { writeFile, mkdir, chmod } from "node:fs/promises";
+import {
+  CLAUDE_CONFIG_DIR,
+  ENV_VARS,
+  getCostMultiplier,
+  type SubscriptionTier,
+} from "../constants.js";
+import { CONFIG_FILE_MODE, REVENIUM_ENV_FILE } from "../../_core/constants.js";
+import {
+  escapeDoubleQuotedShellValue,
+  escapeResourceAttributeValue,
+} from "../../_core/shell/escaping.js";
+import { getFullOtlpEndpoint } from "./loader.js";
+import type { ClaudeCodeConfig } from "./loader.js";
+
+function getClaudeConfigDir(): string {
+  return join(homedir(), CLAUDE_CONFIG_DIR);
+}
+
+function generateEnvContent(config: ClaudeCodeConfig): string {
+  const fullEndpoint = getFullOtlpEndpoint(config.endpoint);
+
+  const lines: string[] = [
+    `export ${ENV_VARS.TELEMETRY_ENABLED}=1`,
+    "",
+    `export ${ENV_VARS.OTLP_ENDPOINT}=${escapeDoubleQuotedShellValue(fullEndpoint)}`,
+    "",
+    `export ${ENV_VARS.OTLP_HEADERS}=${escapeDoubleQuotedShellValue(`x-api-key=${config.apiKey}`)}`,
+    "",
+    `export ${ENV_VARS.OTLP_PROTOCOL}=http/json`,
+    "",
+    "export OTEL_LOGS_EXPORTER=otlp",
+  ];
+
+  if (config.email) {
+    lines.push("");
+    lines.push(`export ${ENV_VARS.SUBSCRIBER_EMAIL}=${escapeDoubleQuotedShellValue(config.email)}`);
+  }
+
+  if (config.subscriptionTier) {
+    const tier = config.subscriptionTier as SubscriptionTier;
+    const costMultiplier = config.costMultiplierOverride ?? getCostMultiplier(tier);
+
+    lines.push("");
+    lines.push(
+      `export ${ENV_VARS.SUBSCRIPTION}=${escapeDoubleQuotedShellValue(config.subscriptionTier)}`,
+    );
+
+    lines.push("");
+    if (config.costMultiplierOverride !== undefined) {
+      lines.push(`export ${ENV_VARS.COST_MULTIPLIER}=${costMultiplier}`);
+    }
+
+    const resourceAttrs: string[] = [`cost_multiplier=${costMultiplier}`];
+
+    const organizationValue = config.organizationName || config.organizationId;
+    if (organizationValue) {
+      resourceAttrs.push(`organization.name=${escapeResourceAttributeValue(organizationValue)}`);
+    }
+
+    const productValue = config.productName || config.productId;
+    if (productValue) {
+      resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
+    }
+    lines.push(`export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs.join(",")}"`);
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+export async function writeConfig(config: ClaudeCodeConfig): Promise<string> {
+  const configDir = getClaudeConfigDir();
+  const configPath = join(configDir, REVENIUM_ENV_FILE);
+
+  await mkdir(configDir, { recursive: true });
+
+  const content = generateEnvContent(config);
+  await writeFile(configPath, content, { encoding: "utf-8" });
+
+  await chmod(configPath, CONFIG_FILE_MODE);
+
+  return configPath;
+}
+
+export function getConfigFilePath(): string {
+  return join(getClaudeConfigDir(), REVENIUM_ENV_FILE);
+}
