@@ -27,8 +27,10 @@ interface SetupOptions {
 
 function getSourceCommand(shellType: ShellType, configPath: string): string {
   switch (shellType) {
-    case "fish":
-      return `if test -f "${configPath}"\n    export (cat "${configPath}" | grep -v '^#' | xargs -L 1)\nend`;
+    case "fish": {
+      const fishConfigPath = configPath.replace(/\.env$/, ".fish");
+      return `if test -f "${fishConfigPath}"\n    source "${fishConfigPath}"\nend`;
+    }
     default:
       return `if [ -f "${configPath}" ]; then\n    source "${configPath}"\nfi`;
   }
@@ -59,8 +61,10 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   const writeSpinner = ora("Writing configuration...").start();
 
   try {
-    const configPath = await writeConfig(config);
-    writeSpinner.succeed(`Configuration written to ${chalk.cyan(configPath)}`);
+    const { envPath, fishPath } = await writeConfig(config);
+    writeSpinner.succeed(
+      `Configuration written to ${chalk.cyan(envPath)} and ${chalk.cyan(fishPath)}`,
+    );
   } catch (error) {
     writeSpinner.fail("Failed to write configuration");
     console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));

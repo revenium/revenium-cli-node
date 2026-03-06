@@ -21,7 +21,7 @@ We will review and respond to security reports in a timely manner.
 
 ## Security Best Practices
 
-When using this CLI:
+When using this middleware:
 
 1. **API Keys**: Never commit API keys to version control
 2. **Environment Variables**: Use environment variables for sensitive configuration

@@ -1,0 +1,78 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to test
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - claude-code
+          - gemini-cli
+          - cursor
+      node-version:
+        description: Node.js version
+        required: false
+        default: "20"
+        type: choice
+        options:
+          - "20"
+          - "22"
+  workflow_call:
+    inputs:
+      provider:
+        description: Provider to test
+        required: false
+        default: all
+        type: string
+      node-version:
+        description: Node.js version
+        required: false
+        default: "20"
+        type: string
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required variables
+        run: |
+          if [ -z "${{ secrets.REVENIUM_E2E_API_KEY }}" ]; then
+            echo "Error: vars.REVENIUM_E2E_API_KEY is not configured in repository variables"
+            exit 1
+          fi
+
+  e2e:
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Run e2e tests
+        run: npm run test:e2e 2>&1 | tee e2e-output.txt
+        env:
+          REVENIUM_E2E_API_KEY: ${{ secrets.REVENIUM_E2E_API_KEY }}
+          REVENIUM_E2E_ENDPOINT: ${{ secrets.REVENIUM_E2E_ENDPOINT }}
+          REVENIUM_E2E_PROVIDER: ${{ inputs.provider }}
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-output-node${{ inputs.node-version }}-${{ inputs.provider }}
+          path: e2e-output.txt
+          if-no-files-found: ignore

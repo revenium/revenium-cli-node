@@ -31,7 +31,7 @@ Thank you for your interest in contributing to this project!
 
 ## Security
 
-For security vulnerabilities, please follow our [Security Policy](https://github.com/revenium/revenium-cli-node/blob/HEAD/SECURITY.md) - do not create public issues.
+For security vulnerabilities, please follow our [Security Policy](https://github.com/revenium/revenium-middleware-node/blob/HEAD/SECURITY.md) - do not create public issues.
 
 ## License
 
