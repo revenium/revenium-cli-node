@@ -1,0 +1,83 @@
+name: Cursor Version Check
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Get latest GitHub release version
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RESPONSE=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/getcursor/cursor/releases/latest)
+          VERSION=$(echo "$RESPONSE" | jq -r '.tag_name' | sed 's/^v//')
+          RELEASE_DATE=$(echo "$RESPONSE" | jq -r '.published_at' | cut -c1-10)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release-date=$RELEASE_DATE" >> $GITHUB_OUTPUT
+
+      - name: Check if issue already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.latest.outputs.version }}"
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --search "Cursor version $VERSION" \
+            --state all \
+            --json number \
+            --jq 'length')
+          if [ "$EXISTING" -eq 0 ]; then
+            echo "should-create=true" >> $GITHUB_OUTPUT
+          else
+            echo "should-create=false" >> $GITHUB_OUTPUT
+            echo "Version $VERSION already tracked — skipping issue creation"
+          fi
+
+      - name: Ensure label exists
+        if: steps.check.outputs.should-create == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh label create "version-check" --repo "${{ github.repository }}" --color "0E8A16" --description "Automated upstream version tracking" 2>/dev/null || true
+
+      - name: Create version tracking issue
+        if: steps.check.outputs.should-create == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.latest.outputs.version }}"
+          RELEASE_DATE="${{ steps.latest.outputs.release-date }}"
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "New Cursor version detected: $VERSION" \
+            --label "version-check" \
+            --body "## New Cursor version detected
+
+          **Source**: \`github.com/getcursor/cursor\`
+          **New Version**: $VERSION
+          **Release Date**: $RELEASE_DATE
+
+          ### Testing Checklist
+
+          - [ ] Run \`npm run test:e2e\` locally with real credentials
+          - [ ] Verify cursor test command still works
+          - [ ] Check for breaking changes in changelog
+          - [ ] Verify OTLP payload fields are unchanged
+          - [ ] Update any version references if needed"
+
+  run-e2e:
+    needs: check-version
+    if: needs.check-version.result == 'success' && secrets.REVENIUM_E2E_API_KEY != ''
+    uses: ./.github/workflows/e2e.yml
+    with:
+      provider: cursor
+      node-version: "20"
+    secrets: inherit

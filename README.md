@@ -507,7 +507,7 @@ npm run format:check     # Prettier check
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+
 
 ## Contributing
 

@@ -76,14 +76,12 @@ export async function runSyncCycle(
       }
     }
 
-    if (result.errors === 0) {
-      await saveState({
-        lastSyncTimestamp: highWatermark > 0 ? highWatermark : state.lastSyncTimestamp,
-        lastSyncEventCount: result.sent,
-        totalEventsSynced: state.totalEventsSynced + result.sent,
-        recentHashes: deduplicator.getHashes(),
-      });
-    }
+    await saveState({
+      lastSyncTimestamp: highWatermark > 0 ? highWatermark : state.lastSyncTimestamp,
+      lastSyncEventCount: result.sent,
+      totalEventsSynced: state.totalEventsSynced + result.sent,
+      recentHashes: deduplicator.getHashes(),
+    });
   } catch (error) {
     result.errors++;
     throw error;
