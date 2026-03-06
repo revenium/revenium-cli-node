@@ -1,0 +1,75 @@
+name: Claude Code Version Check
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Get latest npm version
+        id: latest
+        run: |
+          RESPONSE=$(curl -sf https://registry.npmjs.org/@anthropic-ai/claude-code/latest)
+          VERSION=$(echo "$RESPONSE" | jq -r '.version')
+          RELEASE_DATE=$(curl -sf https://registry.npmjs.org/@anthropic-ai/claude-code | jq -r ".time[\"$VERSION\"]" | cut -c1-10)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release-date=$RELEASE_DATE" >> $GITHUB_OUTPUT
+
+      - name: Check if issue already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.latest.outputs.version }}"
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --search "Claude Code version $VERSION" \
+            --state all \
+            --json number \
+            --jq 'length')
+          if [ "$EXISTING" -eq 0 ]; then
+            echo "should-create=true" >> $GITHUB_OUTPUT
+          else
+            echo "should-create=false" >> $GITHUB_OUTPUT
+            echo "Version $VERSION already tracked — skipping issue creation"
+          fi
+
+      - name: Create version tracking issue
+        if: steps.check.outputs.should-create == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.latest.outputs.version }}"
+          RELEASE_DATE="${{ steps.latest.outputs.release-date }}"
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "New Claude Code version detected: $VERSION" \
+            --label "version-check" \
+            --body "## New Claude Code version detected
+
+          **Package**: \`@anthropic-ai/claude-code\`
+          **New Version**: $VERSION
+          **Release Date**: $RELEASE_DATE
+
+          ### Testing Checklist
+
+          - [ ] Run \`npm run test:e2e\` locally with real credentials
+          - [ ] Verify claude-code test command still works
+          - [ ] Check for breaking changes in changelog
+          - [ ] Verify OTLP payload fields are unchanged
+          - [ ] Update any version references if needed"
+
+  run-e2e:
+    needs: check-version
+    if: needs.check-version.result == 'success' && secrets.REVENIUM_E2E_API_KEY != ''
+    uses: ./.github/workflows/e2e.yml
+    with:
+      provider: claude-code
+      node-version: "20"
+    secrets: inherit

@@ -49,7 +49,10 @@ export async function statusCommand(): Promise<void> {
     console.log(chalk.green("  Environment variables are loaded in current shell"));
   } else {
     console.log(chalk.yellow("  Environment variables not loaded in current shell"));
-    console.log(chalk.dim("  Run: source ~/.claude/revenium.env"));
+    const sourceFile = process.env.SHELL?.includes("fish")
+      ? "~/.claude/revenium.fish"
+      : "~/.claude/revenium.env";
+    console.log(chalk.dim(`  Run: source ${sourceFile}`));
   }
 
   const shellType = detectShell();
