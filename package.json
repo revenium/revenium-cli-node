@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "test:core": "vitest run tests/unit/_core",
     "test:cursor": "vitest run tests/unit/cursor",
+    "test:e2e": "vitest run tests/integration/e2e.test.ts",
     "test:integration": "vitest run tests/integration",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/ tests/",
@@ -35,21 +36,14 @@
   ],
   "author": "Revenium",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/revenium/revenium-cli-node.git"
-  },
-  "homepage": "https://github.com/revenium/revenium-cli-node#readme",
-  "bugs": {
-    "url": "https://github.com/revenium/revenium-cli-node/issues"
-  },
   "dependencies": {
-    "chalk": "^5.4.0",
+    "chalk": "^4.1.2",
     "commander": "^13.1.0",
-    "inquirer": "^12.6.0",
-    "ora": "^8.2.0"
+    "inquirer": "^8.2.6",
+    "ora": "^5.4.1"
   },
   "devDependencies": {
+    "@types/inquirer": "^9.0.9",
     "@types/node": "^20.0.0",
     "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^10.0.2",
@@ -60,10 +54,7 @@
   },
   "files": [
     "dist/**/*",
-    "!dist/**/*.map",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE"
+    "!dist/**/*.map"
   ],
   "engines": {
     "node": ">=20.0.0"
