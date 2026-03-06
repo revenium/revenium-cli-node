@@ -27,8 +27,10 @@ interface SetupOptions {
 
 function getSourceCommand(shellType: ShellType, configPath: string): string {
   switch (shellType) {
-    case "fish":
-      return `if test -f "${configPath}"\n    export (cat "${configPath}" | grep -v '^#' | xargs -L 1)\nend`;
+    case "fish": {
+      const fishConfigPath = configPath.replace(/\.env$/, ".fish");
+      return `if test -f "${fishConfigPath}"\n    source "${fishConfigPath}"\nend`;
+    }
     default:
       return `if [ -f "${configPath}" ]; then\n    source "${configPath}"\nfi`;
   }
@@ -59,8 +61,10 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   const writeSpinner = ora("Writing configuration...").start();
 
   try {
-    const configPath = await writeConfig(config);
-    writeSpinner.succeed(`Configuration written to ${chalk.cyan(configPath)}`);
+    const { envPath, fishPath } = await writeConfig(config);
+    writeSpinner.succeed(
+      `Configuration written to ${chalk.cyan(envPath)} and ${chalk.cyan(fishPath)}`,
+    );
   } catch (error) {
     writeSpinner.fail("Failed to write configuration");
     console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));
@@ -190,9 +194,12 @@ function printSuccessMessage(config: ClaudeCodeConfig): void {
     console.log(`  Tier:       ${tierConfig.name}`);
   }
 
+  const isFish = process.env.SHELL?.includes("fish");
+  const sourceFile = isFish ? "~/.claude/revenium.fish" : "~/.claude/revenium.env";
+
   console.log("\n" + chalk.yellow.bold("Next steps:"));
   console.log("  1. Restart your terminal or run:");
-  console.log(chalk.cyan("     source ~/.claude/revenium.env"));
+  console.log(chalk.cyan(`     source ${sourceFile}`));
   console.log("  2. Start using Claude Code - telemetry will be sent automatically");
   console.log("  3. Import past usage by running: " + chalk.cyan("revenium-metering backfill"));
   console.log("  4. Check your usage at https://app.revenium.ai");

@@ -10,6 +10,7 @@ import {
 import { CONFIG_FILE_MODE, REVENIUM_ENV_FILE } from "../../_core/constants.js";
 import {
   escapeDoubleQuotedShellValue,
+  escapeFishValue,
   escapeResourceAttributeValue,
 } from "../../_core/shell/escaping.js";
 import { getFullOtlpEndpoint } from "./loader.js";
@@ -71,18 +72,76 @@ function generateEnvContent(config: ClaudeCodeConfig): string {
   return lines.join("\n");
 }
 
-export async function writeConfig(config: ClaudeCodeConfig): Promise<string> {
+function generateFishContent(config: ClaudeCodeConfig): string {
+  const fullEndpoint = getFullOtlpEndpoint(config.endpoint);
+
+  const lines: string[] = [
+    `set -gx ${ENV_VARS.TELEMETRY_ENABLED} 1`,
+    "",
+    `set -gx ${ENV_VARS.OTLP_ENDPOINT} ${escapeFishValue(fullEndpoint)}`,
+    "",
+    `set -gx ${ENV_VARS.OTLP_HEADERS} ${escapeFishValue(`x-api-key=${config.apiKey}`)}`,
+    "",
+    `set -gx ${ENV_VARS.OTLP_PROTOCOL} http/json`,
+    "",
+    "set -gx OTEL_LOGS_EXPORTER otlp",
+  ];
+
+  if (config.email) {
+    lines.push("");
+    lines.push(`set -gx ${ENV_VARS.SUBSCRIBER_EMAIL} ${escapeFishValue(config.email)}`);
+  }
+
+  if (config.subscriptionTier) {
+    const tier = config.subscriptionTier as SubscriptionTier;
+    const costMultiplier = config.costMultiplierOverride ?? getCostMultiplier(tier);
+
+    lines.push("");
+    lines.push(`set -gx ${ENV_VARS.SUBSCRIPTION} ${escapeFishValue(config.subscriptionTier)}`);
+
+    if (config.costMultiplierOverride !== undefined) {
+      lines.push("");
+      lines.push(`set -gx ${ENV_VARS.COST_MULTIPLIER} ${costMultiplier}`);
+    }
+
+    const resourceAttrs: string[] = [`cost_multiplier=${costMultiplier}`];
+
+    const organizationValue = config.organizationName || config.organizationId;
+    if (organizationValue) {
+      resourceAttrs.push(`organization.name=${escapeResourceAttributeValue(organizationValue)}`);
+    }
+
+    const productValue = config.productName || config.productId;
+    if (productValue) {
+      resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
+    }
+
+    lines.push("");
+    lines.push(`set -gx OTEL_RESOURCE_ATTRIBUTES ${escapeFishValue(resourceAttrs.join(","))}`);
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+export async function writeConfig(
+  config: ClaudeCodeConfig,
+): Promise<{ envPath: string; fishPath: string }> {
   const configDir = getClaudeConfigDir();
   const configPath = join(configDir, REVENIUM_ENV_FILE);
+  const fishConfigPath = join(configDir, "revenium.fish");
 
   await mkdir(configDir, { recursive: true });
 
   const content = generateEnvContent(config);
   await writeFile(configPath, content, { encoding: "utf-8" });
-
   await chmod(configPath, CONFIG_FILE_MODE);
 
-  return configPath;
+  const fishContent = generateFishContent(config);
+  await writeFile(fishConfigPath, fishContent, { encoding: "utf-8" });
+  await chmod(fishConfigPath, CONFIG_FILE_MODE);
+
+  return { envPath: configPath, fishPath: fishConfigPath };
 }
 
 export function getConfigFilePath(): string {
