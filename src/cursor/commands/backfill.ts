@@ -6,7 +6,12 @@ import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
 import { buildOtlpPayload } from "../core/transform/otlp-mapper.js";
 import { computeEventHash, Deduplicator } from "../core/sync/deduplicator.js";
 import {
-  MAX_EVENTS_PER_BATCH,
+  createRateLimiterState,
+  enforceRateLimit,
+  MAX_BATCH_SIZE,
+  DEFAULT_BATCH_SIZE,
+} from "../../_core/api/rate-limiter.js";
+import {
   SUBSCRIPTION_TIER_CONFIG,
   getCostMultiplier,
   DEFAULT_COST_MULTIPLIER,
@@ -20,10 +25,6 @@ export interface BackfillOptions {
   dryRun?: boolean;
   batchSize?: number;
   verbose?: boolean;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function parseRelativeDate(input: string): Date | null {
@@ -66,7 +67,27 @@ export function parseSinceDate(since: string): Date | null {
 }
 
 export async function backfillCommand(options: BackfillOptions = {}): Promise<void> {
-  const { since, to, dryRun = false, batchSize = MAX_EVENTS_PER_BATCH, verbose = false } = options;
+  const {
+    since,
+    to,
+    dryRun = false,
+    batchSize: rawBatchSize = DEFAULT_BATCH_SIZE,
+    verbose = false,
+  } = options;
+
+  if (!Number.isInteger(rawBatchSize) || rawBatchSize < 1) {
+    console.log(chalk.red("Error: --batch-size must be a positive integer"));
+    process.exit(1);
+  }
+
+  const batchSize = Math.min(rawBatchSize, MAX_BATCH_SIZE);
+  if (rawBatchSize > MAX_BATCH_SIZE) {
+    console.log(
+      chalk.yellow(
+        `batch-size=${rawBatchSize} exceeds maximum of ${MAX_BATCH_SIZE}. Using ${MAX_BATCH_SIZE}.`,
+      ),
+    );
+  }
 
   console.log(chalk.bold("\nRevenium Cursor IDE Backfill\n"));
 
@@ -203,12 +224,13 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   let sentBatches = 0;
   let sentRecords = 0;
   let failedBatches = 0;
-  const delay = 100;
+  const rateLimiterState = createRateLimiterState();
 
   for (let i = 0; i < uniqueEvents.length; i += batchSize) {
     const batch = uniqueEvents.slice(i, i + batchSize);
     const payload = buildOtlpPayload(batch, config);
 
+    await enforceRateLimit(rateLimiterState, { batchSize: batch.length });
     sendSpinner.text = `Sending batch ${sentBatches + failedBatches + 1}/${totalBatches}...`;
 
     try {
@@ -217,10 +239,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
       sentRecords += batch.length;
     } catch {
       failedBatches++;
-    }
-
-    if (i + batchSize < uniqueEvents.length) {
-      await sleep(delay);
     }
   }
 

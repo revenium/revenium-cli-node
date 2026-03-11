@@ -92,14 +92,20 @@ program
   .option("--since <date>", "Start date (ISO 8601 or relative: 7d, 1m, 1y)")
   .option("--to <date>", "End date (ISO 8601, defaults to now)")
   .option("--dry-run", "Preview without sending data")
-  .option("--batch-size <size>", "Events per OTLP batch (default: 100)")
+  .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
   .option("-v, --verbose", "Show detailed output")
   .action(async (options) => {
+    const batchSize = parseInt(options.batchSize, 10);
+    if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 100) {
+      console.error("Error: --batch-size must be between 1 and 100");
+      process.exit(1);
+    }
+
     await backfillCommand({
       since: options.since,
       to: options.to,
       dryRun: options.dryRun,
-      batchSize: options.batchSize ? parseInt(options.batchSize, 10) : undefined,
+      batchSize,
       verbose: options.verbose,
     });
   });
