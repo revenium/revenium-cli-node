@@ -8,6 +8,12 @@ import chalk from "chalk";
 import ora from "ora";
 import { loadConfig } from "../config/loader.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
+import {
+  createRateLimiterState,
+  enforceRateLimit,
+  MAX_BATCH_SIZE,
+  DEFAULT_BATCH_SIZE,
+} from "../../_core/api/rate-limiter.js";
 import { getCostMultiplier, type SubscriptionTier } from "../constants.js";
 import type { OTLPLogsPayload } from "../../_core/types/index.js";
 
@@ -56,10 +62,6 @@ interface RetryResult {
   success: boolean;
   attempts: number;
   error?: string;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function generateTransactionId(record: ParsedRecord): string {
@@ -112,7 +114,7 @@ async function sendBatchWithRetry(
         if (verbose) {
           console.log(chalk.yellow(`  Attempt ${attempt + 1} failed: ${errorMsg}`));
         }
-        await sleep(backoffDelay);
+        await new Promise<void>((resolve) => setTimeout(resolve, backoffDelay));
       } else {
         return { success: false, attempts: maxRetries, error: errorMsg };
       }
@@ -337,7 +339,27 @@ function createOtlpPayload(
 }
 
 export async function backfillCommand(options: BackfillOptions = {}): Promise<void> {
-  const { since, dryRun = false, batchSize = 100, delay = 100, verbose = false } = options;
+  const {
+    since,
+    dryRun = false,
+    batchSize: rawBatchSize = DEFAULT_BATCH_SIZE,
+    delay = 0,
+    verbose = false,
+  } = options;
+
+  if (!Number.isInteger(rawBatchSize) || rawBatchSize < 1) {
+    console.log(chalk.red("Error: --batch-size must be a positive integer"));
+    process.exit(1);
+  }
+
+  const batchSize = Math.min(rawBatchSize, MAX_BATCH_SIZE);
+  if (rawBatchSize > MAX_BATCH_SIZE) {
+    console.log(
+      chalk.yellow(
+        `batch-size=${rawBatchSize} exceeds maximum of ${MAX_BATCH_SIZE}. Using ${MAX_BATCH_SIZE}.`,
+      ),
+    );
+  }
 
   console.log(chalk.bold("\nRevenium Claude Code Backfill\n"));
 
@@ -461,6 +483,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   let sentRecords = 0;
   let permanentlyFailedBatches = 0;
   const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
+  const rateLimiterState = createRateLimiterState();
 
   for (let i = 0; i < allRecords.length; i += batchSize) {
     const batchNumber = Math.floor(i / batchSize) + 1;
@@ -472,6 +495,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
       productName: config.productName || config.productId,
     });
 
+    await enforceRateLimit(rateLimiterState, { batchSize: batch.length, userDelayMs: delay });
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
     const result = await sendBatchWithRetry(config.endpoint, config.apiKey, payload, 3, verbose);
@@ -486,10 +510,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
         batchNumber,
         error: result.error || "Unknown error",
       });
-    }
-
-    if (i + batchSize < allRecords.length) {
-      await sleep(delay);
     }
   }
 

@@ -59,13 +59,13 @@ program
     'Only backfill after this date (ISO format or relative like "7d", "1m")',
   )
   .option("--dry-run", "Show what would be sent without sending")
-  .option("--batch-size <n>", "Messages per API batch (default: 100)", "100")
-  .option("--delay <ms>", "Delay between batches in milliseconds (default: 100)", "100")
+  .option("--batch-size <n>", "Messages per API batch, max 100 (default: 10)", "10")
+  .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
   .option("-v, --verbose", "Show detailed progress")
   .action(async (options) => {
     const batchSize = parseInt(options.batchSize, 10);
-    if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 10000) {
-      console.error("Error: --batch-size must be between 1 and 10000");
+    if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 100) {
+      console.error("Error: --batch-size must be between 1 and 100");
       process.exit(1);
     }
 

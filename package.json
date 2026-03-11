@@ -1,6 +1,6 @@
 {
   "name": "@revenium/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Unified Revenium CLI tools for Claude Code, Gemini CLI, and Cursor metering setup",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
