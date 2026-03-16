@@ -14,7 +14,6 @@ import {
   MAX_BATCH_SIZE,
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
-import { getCostMultiplier, type SubscriptionTier } from "../constants.js";
 import type { OTLPLogsPayload } from "../../_core/types/index.js";
 
 export interface BackfillOptions {
@@ -42,7 +41,7 @@ interface JsonlEntry {
   };
 }
 
-interface ParsedRecord {
+export interface ParsedRecord {
   sessionId: string;
   timestamp: string;
   model: string;
@@ -260,16 +259,15 @@ function toUnixNano(timestamp: string): string | null {
   return (BigInt(ms) * BigInt(1_000_000)).toString();
 }
 
-function createOtlpPayload(
+export function createOtlpPayload(
   records: ParsedRecord[],
   options: {
-    costMultiplier: number;
     email?: string;
     organizationName?: string;
     productName?: string;
   },
 ): OTLPLogsPayload {
-  const { costMultiplier, email, organizationName, productName } = options;
+  const { email, organizationName, productName } = options;
 
   const logRecords = records
     .map((record) => {
@@ -301,31 +299,27 @@ function createOtlpPayload(
       if (email) {
         attributes.push({ key: "user.email", value: { stringValue: email } });
       }
-      if (organizationName) {
-        attributes.push({
-          key: "organization.name",
-          value: { stringValue: organizationName },
-        });
-      }
-      if (productName) {
-        attributes.push({
-          key: "product.name",
-          value: { stringValue: productName },
-        });
-      }
 
       return { timeUnixNano, body: { stringValue: "claude_code.api_request" }, attributes };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
+  const resourceAttributes: Array<{ key: string; value: { stringValue: string } }> = [
+    { key: "service.name", value: { stringValue: "claude-code" } },
+  ];
+
+  if (organizationName) {
+    resourceAttributes.push({ key: "organization.name", value: { stringValue: organizationName } });
+  }
+  if (productName) {
+    resourceAttributes.push({ key: "product.name", value: { stringValue: productName } });
+  }
+
   return {
     resourceLogs: [
       {
         resource: {
-          attributes: [
-            { key: "service.name", value: { stringValue: "claude-code" } },
-            { key: "cost_multiplier", value: { doubleValue: costMultiplier } },
-          ],
+          attributes: resourceAttributes,
         },
         scopeLogs: [
           {
@@ -384,12 +378,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     }
     console.log(chalk.dim(`Filtering records since: ${sinceDate.toISOString()}\n`));
   }
-
-  const costMultiplier =
-    config.costMultiplierOverride ??
-    (config.subscriptionTier
-      ? getCostMultiplier(config.subscriptionTier as SubscriptionTier)
-      : 0.08);
 
   const projectsDir = join(homedir(), ".claude", "projects");
   const discoverSpinner = ora("Discovering JSONL files...").start();
@@ -470,7 +458,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   console.log(`  Output tokens:        ${totalOutput.toLocaleString()}`);
   console.log(`  Cache read tokens:    ${totalCacheRead.toLocaleString()}`);
   console.log(`  Cache creation:       ${totalCacheCreation.toLocaleString()}`);
-  console.log(`  Cost multiplier:      ${costMultiplier}`);
 
   if (dryRun) {
     console.log("\n" + chalk.yellow("Dry run complete. Use without --dry-run to send data."));
@@ -489,7 +476,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = allRecords.slice(i, i + batchSize);
     const payload = createOtlpPayload(batch, {
-      costMultiplier,
       email: config.email,
       organizationName: config.organizationName || config.organizationId,
       productName: config.productName || config.productId,

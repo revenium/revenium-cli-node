@@ -1,12 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeFile, mkdir, chmod } from "node:fs/promises";
-import {
-  CLAUDE_CONFIG_DIR,
-  ENV_VARS,
-  getCostMultiplier,
-  type SubscriptionTier,
-} from "../constants.js";
+import { CLAUDE_CONFIG_DIR, ENV_VARS } from "../constants.js";
 import { CONFIG_FILE_MODE, REVENIUM_ENV_FILE } from "../../_core/constants.js";
 import {
   escapeDoubleQuotedShellValue,
@@ -20,7 +15,7 @@ function getClaudeConfigDir(): string {
   return join(homedir(), CLAUDE_CONFIG_DIR);
 }
 
-function generateEnvContent(config: ClaudeCodeConfig): string {
+export function generateEnvContent(config: ClaudeCodeConfig): string {
   const fullEndpoint = getFullOtlpEndpoint(config.endpoint);
 
   const lines: string[] = [
@@ -41,20 +36,35 @@ function generateEnvContent(config: ClaudeCodeConfig): string {
   }
 
   if (config.subscriptionTier) {
-    const tier = config.subscriptionTier as SubscriptionTier;
-    const costMultiplier = config.costMultiplierOverride ?? getCostMultiplier(tier);
-
     lines.push("");
     lines.push(
       `export ${ENV_VARS.SUBSCRIPTION}=${escapeDoubleQuotedShellValue(config.subscriptionTier)}`,
     );
 
     lines.push("");
-    if (config.costMultiplierOverride !== undefined) {
-      lines.push(`export ${ENV_VARS.COST_MULTIPLIER}=${costMultiplier}`);
+    lines.push(
+      `export ${ENV_VARS.SUBSCRIPTION_TIER}=${escapeDoubleQuotedShellValue(config.subscriptionTier)}`,
+    );
+  }
+
+  if (config.extraUsageEnabled !== undefined) {
+    lines.push("");
+    lines.push(`export ${ENV_VARS.EXTRA_USAGE_ENABLED}=${config.extraUsageEnabled ? 1 : 0}`);
+  }
+
+  // Write OTEL_RESOURCE_ATTRIBUTES when email or tier is present
+  if (config.email || config.subscriptionTier) {
+    const resourceAttrs: string[] = [];
+
+    if (config.subscriptionTier) {
+      resourceAttrs.push(
+        `CLAUDE_CODE_SUBSCRIPTION_TIER=${escapeResourceAttributeValue(config.subscriptionTier)}`,
+      );
     }
 
-    const resourceAttrs: string[] = [`cost_multiplier=${costMultiplier}`];
+    if (config.email) {
+      resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
+    }
 
     const organizationValue = config.organizationName || config.organizationId;
     if (organizationValue) {
@@ -65,14 +75,18 @@ function generateEnvContent(config: ClaudeCodeConfig): string {
     if (productValue) {
       resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
     }
-    lines.push(`export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs.join(",")}"`);
+
+    if (resourceAttrs.length > 0) {
+      lines.push("");
+      lines.push(`export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs.join(",")}"`);
+    }
   }
 
   lines.push("");
   return lines.join("\n");
 }
 
-function generateFishContent(config: ClaudeCodeConfig): string {
+export function generateFishContent(config: ClaudeCodeConfig): string {
   const fullEndpoint = getFullOtlpEndpoint(config.endpoint);
 
   const lines: string[] = [
@@ -93,18 +107,31 @@ function generateFishContent(config: ClaudeCodeConfig): string {
   }
 
   if (config.subscriptionTier) {
-    const tier = config.subscriptionTier as SubscriptionTier;
-    const costMultiplier = config.costMultiplierOverride ?? getCostMultiplier(tier);
-
     lines.push("");
     lines.push(`set -gx ${ENV_VARS.SUBSCRIPTION} ${escapeFishValue(config.subscriptionTier)}`);
 
-    if (config.costMultiplierOverride !== undefined) {
-      lines.push("");
-      lines.push(`set -gx ${ENV_VARS.COST_MULTIPLIER} ${costMultiplier}`);
+    lines.push("");
+    lines.push(`set -gx ${ENV_VARS.SUBSCRIPTION_TIER} ${escapeFishValue(config.subscriptionTier)}`);
+  }
+
+  if (config.extraUsageEnabled !== undefined) {
+    lines.push("");
+    lines.push(`set -gx ${ENV_VARS.EXTRA_USAGE_ENABLED} ${config.extraUsageEnabled ? 1 : 0}`);
+  }
+
+  // Write OTEL_RESOURCE_ATTRIBUTES when email or tier is present
+  if (config.email || config.subscriptionTier) {
+    const resourceAttrs: string[] = [];
+
+    if (config.subscriptionTier) {
+      resourceAttrs.push(
+        `CLAUDE_CODE_SUBSCRIPTION_TIER=${escapeResourceAttributeValue(config.subscriptionTier)}`,
+      );
     }
 
-    const resourceAttrs: string[] = [`cost_multiplier=${costMultiplier}`];
+    if (config.email) {
+      resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
+    }
 
     const organizationValue = config.organizationName || config.organizationId;
     if (organizationValue) {
@@ -116,8 +143,10 @@ function generateFishContent(config: ClaudeCodeConfig): string {
       resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
     }
 
-    lines.push("");
-    lines.push(`set -gx OTEL_RESOURCE_ATTRIBUTES ${escapeFishValue(resourceAttrs.join(","))}`);
+    if (resourceAttrs.length > 0) {
+      lines.push("");
+      lines.push(`set -gx OTEL_RESOURCE_ATTRIBUTES ${escapeFishValue(resourceAttrs.join(","))}`);
+    }
   }
 
   lines.push("");

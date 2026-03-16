@@ -34,24 +34,12 @@ export function createTestPayload(
     { key: "duration_ms", value: { stringValue: "0" } },
   ];
 
-  if (options?.email) {
+  // Email: use options, then fallback to env
+  const email = options?.email || process.env.REVENIUM_SUBSCRIBER_EMAIL;
+  if (email) {
     logAttributes.push({
       key: "user.email",
-      value: { stringValue: options.email },
-    });
-  }
-
-  if (options?.organizationName) {
-    logAttributes.push({
-      key: "organization.name",
-      value: { stringValue: options.organizationName },
-    });
-  }
-
-  if (options?.productName) {
-    logAttributes.push({
-      key: "product.name",
-      value: { stringValue: options.productName },
+      value: { stringValue: email },
     });
   }
 
@@ -59,6 +47,42 @@ export function createTestPayload(
     key: string;
     value: { stringValue: string };
   }> = [{ key: "service.name", value: { stringValue: serviceName } }];
+
+  // org/product in resource attributes
+  if (options?.organizationName) {
+    resourceAttributes.push({
+      key: "organization.name",
+      value: { stringValue: options.organizationName },
+    });
+  }
+
+  if (options?.productName) {
+    resourceAttributes.push({
+      key: "product.name",
+      value: { stringValue: options.productName },
+    });
+  }
+
+  // Parse existing OTEL_RESOURCE_ATTRIBUTES from env
+  const envResourceAttrs = process.env.OTEL_RESOURCE_ATTRIBUTES;
+  if (envResourceAttrs) {
+    const excludeKeys = new Set(["service.name", "user.email"]);
+    for (const pair of envResourceAttrs.split(",")) {
+      const eqIndex = pair.indexOf("=");
+      if (eqIndex === -1) continue;
+      const key = pair.substring(0, eqIndex);
+      if (excludeKeys.has(key)) continue;
+      // Skip if already added via options
+      if (resourceAttributes.some((a) => a.key === key)) continue;
+      let value = pair.substring(eqIndex + 1);
+      try {
+        value = decodeURIComponent(value);
+      } catch {
+        // use raw value if percent-encoding is malformed
+      }
+      resourceAttributes.push({ key, value: { stringValue: value } });
+    }
+  }
 
   return {
     resourceLogs: [

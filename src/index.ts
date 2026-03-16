@@ -22,3 +22,4 @@ export {
 } from "./_core/api/health-check.js";
 export { maskApiKey, maskEmail } from "./_core/utils/masking.js";
 export { detectShell, getProfilePath } from "./_core/shell/detector.js";
+export { verifyApiKey } from "./_core/api/verify-key.js";

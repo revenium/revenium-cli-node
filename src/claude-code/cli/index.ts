@@ -24,6 +24,7 @@ program
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")
   .option("--skip-shell-update", "Skip automatic shell profile update")
+  .option("--extra-usage-enabled", "Set CLAUDE_CODE_EXTRA_USAGE_ENABLED=1 in SDK config")
   .action(async (options) => {
     await setupCommand({
       apiKey: options.apiKey,
@@ -33,6 +34,7 @@ program
       organizationId: options.organization,
       productId: options.product,
       skipShellUpdate: options.skipShellUpdate,
+      extraUsageEnabled: options.extraUsageEnabled || undefined,
     });
   });
 
