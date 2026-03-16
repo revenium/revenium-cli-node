@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-03-16
+
+### Added
+
+- Identity fields (user email, account UUID, organization) in OTLP resource attributes
+- Subscription tier as OTLP resource attribute for backend cost adjustment
+- API key verification endpoint support (`verify-key`)
+
+### Fixed
+
+- Escape shell metacharacters in OTEL_RESOURCE_ATTRIBUTES values
+- Guard `decodeURIComponent` in health-check OTEL attribute parsing
+
 ## [1.0.1] - 2026-03-11
 
 ### Added
@@ -34,5 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.0.2]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.2
 [1.0.1]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.1
 [1.0.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.0

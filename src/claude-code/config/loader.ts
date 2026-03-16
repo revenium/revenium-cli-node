@@ -17,7 +17,7 @@ export interface ClaudeCodeConfig {
   endpoint: string;
   email?: string;
   subscriptionTier?: SubscriptionTier;
-  costMultiplierOverride?: number;
+  extraUsageEnabled?: boolean;
   organizationName?: string;
   organizationId?: string;
   productName?: string;
@@ -56,8 +56,13 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       return null;
     }
 
-    const costMultiplierStr = env[ENV_VARS.COST_MULTIPLIER];
-    const costMultiplierOverride = costMultiplierStr ? parseFloat(costMultiplierStr) : undefined;
+    const subscriptionTier = (env[ENV_VARS.SUBSCRIPTION_TIER] || env[ENV_VARS.SUBSCRIPTION]) as
+      | SubscriptionTier
+      | undefined;
+
+    const extraUsageEnabledRaw = env[ENV_VARS.EXTRA_USAGE_ENABLED];
+    const extraUsageEnabled =
+      extraUsageEnabledRaw === "1" ? true : extraUsageEnabledRaw === "0" ? false : undefined;
 
     const resourceAttrsStr = env["OTEL_RESOURCE_ATTRIBUTES"] || "";
     const resourceAttrs = parseOtelResourceAttributes(resourceAttrsStr);
@@ -74,11 +79,8 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       apiKey,
       endpoint: extractBaseEndpoint(fullEndpoint),
       email: env[ENV_VARS.SUBSCRIBER_EMAIL],
-      subscriptionTier: env[ENV_VARS.SUBSCRIPTION] as SubscriptionTier | undefined,
-      costMultiplierOverride:
-        costMultiplierOverride !== undefined && !isNaN(costMultiplierOverride)
-          ? costMultiplierOverride
-          : undefined,
+      subscriptionTier,
+      extraUsageEnabled,
       organizationName,
       organizationId: organizationName,
       productName,

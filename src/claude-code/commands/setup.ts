@@ -23,6 +23,7 @@ interface SetupOptions {
   organizationId?: string;
   productId?: string;
   skipShellUpdate?: boolean;
+  extraUsageEnabled?: boolean;
 }
 
 function getSourceCommand(shellType: ShellType, configPath: string): string {
@@ -176,6 +177,7 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
     endpoint,
     organizationId: options.organizationId,
     productId: options.productId,
+    extraUsageEnabled: options.extraUsageEnabled,
   };
 }
 
