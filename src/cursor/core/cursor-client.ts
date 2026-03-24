@@ -110,7 +110,7 @@ function parseTimestamps(events: CursorUsageEvent[]): CursorUsageEvent[] {
     ...event,
     timestamp:
       typeof event.timestamp === "string"
-        ? new Date(event.timestamp as unknown as string).getTime()
+        ? Number(event.timestamp as unknown as string)
         : event.timestamp,
   }));
 }
@@ -144,7 +144,7 @@ export async function* fetchEvents(
 
   while (chunkStart < to) {
     const chunkEnd = Math.min(chunkStart + msPerChunk, to);
-    let page = 0;
+    let page = 1;
     let hasNextPage = true;
 
     while (hasNextPage) {
@@ -168,7 +168,7 @@ export async function testConnectivity(apiKey: string): Promise<boolean> {
   const oneHourAgo = now - 60 * 60 * 1000;
 
   try {
-    await fetchPage(apiKey, oneHourAgo, now);
+    await fetchPage(apiKey, oneHourAgo, now, 1);
     return true;
   } catch {
     return false;
