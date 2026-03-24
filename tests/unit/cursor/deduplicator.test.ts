@@ -25,6 +25,27 @@ describe("computeEventHash", () => {
     expect(h1).not.toBe(h2);
   });
 
+  it("handles missing tokenUsage without crashing", () => {
+    const hash = computeEventHash(createUsageEvent({ tokenUsage: undefined }));
+    expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("produces different hashes for missing vs zero tokenUsage", () => {
+    const missingHash = computeEventHash(createUsageEvent({ tokenUsage: undefined }));
+    const zeroHash = computeEventHash(
+      createUsageEvent({
+        tokenUsage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheWriteTokens: 0,
+          cacheReadTokens: 0,
+          totalCents: 0,
+        },
+      }),
+    );
+    expect(missingHash).not.toBe(zeroHash);
+  });
+
   it("considers token counts in hash", () => {
     const h1 = computeEventHash(
       createUsageEvent({

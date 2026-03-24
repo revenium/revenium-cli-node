@@ -1,6 +1,6 @@
 import { fetchEvents } from "../cursor-client.js";
 import { sendOtlpLogs } from "../../../_core/api/otlp-client.js";
-import { buildOtlpPayload } from "../transform/otlp-mapper.js";
+import { buildOtlpPayload, isValidTimestamp } from "../transform/otlp-mapper.js";
 import { loadState, saveState } from "./state-manager.js";
 import { Deduplicator, computeEventHash } from "./deduplicator.js";
 import { DEFAULT_OVERLAP_MULTIPLIER, MAX_EVENTS_PER_BATCH } from "../../constants.js";
@@ -91,11 +91,14 @@ export async function runSyncCycle(
 }
 
 async function sendBatch(events: CursorUsageEvent[], config: CursorConfig): Promise<number> {
-  const payload = buildOtlpPayload(events, config);
+  const validEvents = events.filter((e) => isValidTimestamp(e.timestamp));
+  if (validEvents.length === 0) return 0;
+
+  const payload = buildOtlpPayload(validEvents, config);
 
   try {
     await sendOtlpLogs(config.reveniumEndpoint, config.reveniumApiKey, payload);
-    return events.length;
+    return validEvents.length;
   } catch {
     return 0;
   }

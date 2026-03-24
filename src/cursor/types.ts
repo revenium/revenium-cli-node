@@ -16,13 +16,13 @@ export interface CursorUsageEvent {
   timestamp: number;
   model: string;
   kind: string;
-  tokenUsage: {
+  tokenUsage?: {
     inputTokens: number;
     outputTokens: number;
     cacheWriteTokens: number;
     cacheReadTokens: number;
     totalCents: number;
-  };
+  } | null;
   cursorTokenFee: number;
   requestsCosts: number;
   isTokenBasedCall: boolean;
