@@ -55,5 +55,6 @@ export interface SyncResult {
   fetched: number;
   sent: number;
   duplicatesSkipped: number;
+  invalidTimestampsSkipped: number;
   errors: number;
 }
