@@ -42,6 +42,9 @@ function formatResult(result: SyncResult): string {
   if (result.duplicatesSkipped > 0) {
     parts.push(`skipped=${result.duplicatesSkipped}`);
   }
+  if (result.invalidTimestampsSkipped > 0) {
+    parts.push(`invalidTimestamps=${result.invalidTimestampsSkipped}`);
+  }
   if (result.errors > 0) {
     parts.push(`errors=${result.errors}`);
   }

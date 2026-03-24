@@ -2,6 +2,10 @@ import type { OTLPLogsPayload } from "../../../_core/types/index.js";
 import type { CursorUsageEvent, CursorConfig } from "../../types.js";
 import { SERVICE_NAME, SCOPE_NAME } from "../../constants.js";
 
+export function isValidTimestamp(ts: unknown): ts is number {
+  return typeof ts === "number" && Number.isFinite(ts) && Number.isInteger(ts) && ts > 0;
+}
+
 function mapEventToLogRecord(
   event: CursorUsageEvent,
 ): OTLPLogsPayload["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0] {
@@ -11,24 +15,24 @@ function mapEventToLogRecord(
     { key: "model", value: { stringValue: event.model } },
     {
       key: "input_tokens",
-      value: { stringValue: String(event.tokenUsage.inputTokens) },
+      value: { stringValue: String(event.tokenUsage?.inputTokens ?? 0) },
     },
     {
       key: "output_tokens",
-      value: { stringValue: String(event.tokenUsage.outputTokens) },
+      value: { stringValue: String(event.tokenUsage?.outputTokens ?? 0) },
     },
     {
       key: "cache_read_tokens",
-      value: { stringValue: String(event.tokenUsage.cacheReadTokens) },
+      value: { stringValue: String(event.tokenUsage?.cacheReadTokens ?? 0) },
     },
     {
       key: "cache_creation_tokens",
-      value: { stringValue: String(event.tokenUsage.cacheWriteTokens) },
+      value: { stringValue: String(event.tokenUsage?.cacheWriteTokens ?? 0) },
     },
     {
       key: "cost_usd",
       value: {
-        stringValue: (event.tokenUsage.totalCents / 100).toFixed(6),
+        stringValue: ((event.tokenUsage?.totalCents ?? 0) / 100).toFixed(6),
       },
     },
     { key: "user.email", value: { stringValue: event.userEmail } },

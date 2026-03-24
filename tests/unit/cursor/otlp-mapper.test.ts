@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildOtlpPayload } from "../../../src/cursor/core/transform/otlp-mapper.js";
+import {
+  buildOtlpPayload,
+  isValidTimestamp,
+} from "../../../src/cursor/core/transform/otlp-mapper.js";
 import { createUsageEvent, createCursorConfig } from "../../helpers/fixtures.js";
 
 describe("buildOtlpPayload", () => {
@@ -82,5 +85,48 @@ describe("buildOtlpPayload", () => {
     const payload = buildOtlpPayload([createUsageEvent()], createCursorConfig());
     const record = payload.resourceLogs[0].scopeLogs[0].logRecords[0];
     expect(record.body.stringValue).toBe("cursor_ide.api_response");
+  });
+});
+
+describe("isValidTimestamp", () => {
+  it("accepts a valid millisecond timestamp", () => {
+    expect(isValidTimestamp(1700000000000)).toBe(true);
+  });
+
+  it("accepts small positive integers", () => {
+    expect(isValidTimestamp(1)).toBe(true);
+  });
+
+  it("rejects NaN", () => {
+    expect(isValidTimestamp(NaN)).toBe(false);
+  });
+
+  it("rejects Infinity", () => {
+    expect(isValidTimestamp(Infinity)).toBe(false);
+    expect(isValidTimestamp(-Infinity)).toBe(false);
+  });
+
+  it("rejects zero", () => {
+    expect(isValidTimestamp(0)).toBe(false);
+  });
+
+  it("rejects negative numbers", () => {
+    expect(isValidTimestamp(-1700000000000)).toBe(false);
+  });
+
+  it("rejects non-integer numbers", () => {
+    expect(isValidTimestamp(1700000000000.5)).toBe(false);
+  });
+
+  it("rejects undefined", () => {
+    expect(isValidTimestamp(undefined)).toBe(false);
+  });
+
+  it("rejects null", () => {
+    expect(isValidTimestamp(null)).toBe(false);
+  });
+
+  it("rejects strings", () => {
+    expect(isValidTimestamp("1700000000000")).toBe(false);
   });
 });

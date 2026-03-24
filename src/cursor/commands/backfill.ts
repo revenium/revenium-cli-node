@@ -3,7 +3,7 @@ import ora from "ora";
 import { loadConfig, configExists } from "../config/loader.js";
 import { fetchEvents } from "../core/cursor-client.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
-import { buildOtlpPayload } from "../core/transform/otlp-mapper.js";
+import { buildOtlpPayload, isValidTimestamp } from "../core/transform/otlp-mapper.js";
 import { computeEventHash, Deduplicator } from "../core/sync/deduplicator.js";
 import {
   createRateLimiterState,
@@ -182,17 +182,28 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     return;
   }
 
-  const timestamps = uniqueEvents.map((e) => e.timestamp).sort();
-  const totalTokens = uniqueEvents.reduce(
+  const invalidTimestampCount = uniqueEvents.filter((e) => !isValidTimestamp(e.timestamp)).length;
+  const sendableEvents = uniqueEvents.filter((e) => isValidTimestamp(e.timestamp));
+
+  if (sendableEvents.length === 0) {
+    console.log(chalk.yellow("\nAll unique events have invalid timestamps. Nothing to backfill."));
+    return;
+  }
+
+  const timestamps = sendableEvents.map((e) => e.timestamp).sort((a, b) => a - b);
+  const totalTokens = sendableEvents.reduce(
     (sum, e) =>
       sum +
-      e.tokenUsage.inputTokens +
-      e.tokenUsage.outputTokens +
-      e.tokenUsage.cacheReadTokens +
-      e.tokenUsage.cacheWriteTokens,
+      (e.tokenUsage?.inputTokens ?? 0) +
+      (e.tokenUsage?.outputTokens ?? 0) +
+      (e.tokenUsage?.cacheReadTokens ?? 0) +
+      (e.tokenUsage?.cacheWriteTokens ?? 0),
     0,
   );
-  const totalCostCents = uniqueEvents.reduce((sum, e) => sum + e.tokenUsage.totalCents, 0);
+  const totalCostCents = sendableEvents.reduce(
+    (sum, e) => sum + (e.tokenUsage?.totalCents ?? 0),
+    0,
+  );
 
   console.log("\n" + chalk.bold("Summary:"));
   console.log(`  Total events:     ${allEvents.length.toLocaleString()}`);
@@ -200,9 +211,15 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   if (duplicateCount > 0) {
     console.log(`  Duplicates:       ${duplicateCount.toLocaleString()}`);
   }
-  console.log(
-    `  Date range:       ${new Date(timestamps[0]).toISOString().split("T")[0]} to ${new Date(timestamps[timestamps.length - 1]).toISOString().split("T")[0]}`,
-  );
+  if (invalidTimestampCount > 0) {
+    console.log(`  Invalid timestamps: ${invalidTimestampCount.toLocaleString()} (skipped)`);
+  }
+  console.log(`  Sendable events:  ${sendableEvents.length.toLocaleString()}`);
+  if (timestamps.length > 0) {
+    console.log(
+      `  Date range:       ${new Date(timestamps[0]).toISOString().split("T")[0]} to ${new Date(timestamps[timestamps.length - 1]).toISOString().split("T")[0]}`,
+    );
+  }
   console.log(`  Total tokens:     ${totalTokens.toLocaleString()}`);
   console.log(`  Total cost:       $${(totalCostCents / 100).toFixed(2)}`);
   console.log(`  Cost multiplier:  ${costMultiplier}`);
@@ -212,22 +229,22 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
 
     if (verbose) {
       console.log("\n" + chalk.dim("Sample OTLP payload (first batch):"));
-      const sampleEvents = uniqueEvents.slice(0, Math.min(batchSize, 3));
+      const sampleEvents = sendableEvents.slice(0, Math.min(batchSize, 3));
       const samplePayload = buildOtlpPayload(sampleEvents, config);
       console.log(chalk.dim(JSON.stringify(samplePayload, null, 2)));
     }
     return;
   }
 
-  const totalBatches = Math.ceil(uniqueEvents.length / batchSize);
+  const totalBatches = Math.ceil(sendableEvents.length / batchSize);
   const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
   let sentBatches = 0;
   let sentRecords = 0;
   let failedBatches = 0;
   const rateLimiterState = createRateLimiterState();
 
-  for (let i = 0; i < uniqueEvents.length; i += batchSize) {
-    const batch = uniqueEvents.slice(i, i + batchSize);
+  for (let i = 0; i < sendableEvents.length; i += batchSize) {
+    const batch = sendableEvents.slice(i, i + batchSize);
     const payload = buildOtlpPayload(batch, config);
 
     await enforceRateLimit(rateLimiterState, { batchSize: batch.length });

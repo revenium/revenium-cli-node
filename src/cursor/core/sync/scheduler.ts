@@ -1,6 +1,6 @@
 import { fetchEvents } from "../cursor-client.js";
 import { sendOtlpLogs } from "../../../_core/api/otlp-client.js";
-import { buildOtlpPayload } from "../transform/otlp-mapper.js";
+import { buildOtlpPayload, isValidTimestamp } from "../transform/otlp-mapper.js";
 import { loadState, saveState } from "./state-manager.js";
 import { Deduplicator, computeEventHash } from "./deduplicator.js";
 import { DEFAULT_OVERLAP_MULTIPLIER, MAX_EVENTS_PER_BATCH } from "../../constants.js";
@@ -32,6 +32,7 @@ export async function runSyncCycle(
     fetched: 0,
     sent: 0,
     duplicatesSkipped: 0,
+    invalidTimestampsSkipped: 0,
     errors: 0,
   };
 
@@ -47,6 +48,11 @@ export async function runSyncCycle(
 
         if (deduplicator.isDuplicate(hash)) {
           result.duplicatesSkipped++;
+          continue;
+        }
+
+        if (!isValidTimestamp(event.timestamp)) {
+          result.invalidTimestampsSkipped++;
           continue;
         }
 
@@ -91,6 +97,8 @@ export async function runSyncCycle(
 }
 
 async function sendBatch(events: CursorUsageEvent[], config: CursorConfig): Promise<number> {
+  if (events.length === 0) return 0;
+
   const payload = buildOtlpPayload(events, config);
 
   try {
