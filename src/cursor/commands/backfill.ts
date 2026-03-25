@@ -11,12 +11,6 @@ import {
   MAX_BATCH_SIZE,
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
-import {
-  SUBSCRIPTION_TIER_CONFIG,
-  getCostMultiplier,
-  DEFAULT_COST_MULTIPLIER,
-  type SubscriptionTier,
-} from "../constants.js";
 import type { CursorUsageEvent } from "../types.js";
 
 export interface BackfillOptions {
@@ -134,12 +128,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     toMs = Date.now();
   }
 
-  const costMultiplier =
-    config.costMultiplierOverride ??
-    (config.subscriptionTier && config.subscriptionTier in SUBSCRIPTION_TIER_CONFIG
-      ? getCostMultiplier(config.subscriptionTier as SubscriptionTier)
-      : DEFAULT_COST_MULTIPLIER);
-
   const fetchSpinner = ora("Fetching historical events from Cursor API...").start();
   const allEvents: CursorUsageEvent[] = [];
 
@@ -222,7 +210,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   }
   console.log(`  Total tokens:     ${totalTokens.toLocaleString()}`);
   console.log(`  Total cost:       $${(totalCostCents / 100).toFixed(2)}`);
-  console.log(`  Cost multiplier:  ${costMultiplier}`);
 
   if (dryRun) {
     console.log("\n" + chalk.yellow("Dry run complete. Use without --dry-run to send data."));

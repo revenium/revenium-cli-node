@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-03-25
+
+### Removed
+
+- Cost multiplier logic from Cursor CLI (constants, config loader/writer, backfill, types)
+- Cost multiplier logic from Gemini CLI (constants, config loader/writer, setup, status, CLI options)
+
 ## [1.0.3] - 2026-03-24
 
 ### Fixed
@@ -56,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.0.4]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.4
 [1.0.3]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.3
 [1.0.2]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.2
 [1.0.1]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.1

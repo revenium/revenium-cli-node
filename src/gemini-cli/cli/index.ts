@@ -20,26 +20,14 @@ program
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")
-  .option("-c, --cost-multiplier <number>", "Cost multiplier for pricing adjustments")
   .option("--endpoint <url>", "Revenium API endpoint URL")
   .option("--skip-shell-update", "Skip automatic shell profile update")
   .action(async (options) => {
-    let costMultiplier: number | undefined = undefined;
-    if (options.costMultiplier) {
-      const trimmed = options.costMultiplier.trim();
-      costMultiplier = Number(trimmed);
-      if (isNaN(costMultiplier) || !isFinite(costMultiplier) || costMultiplier <= 0) {
-        console.error("Error: --cost-multiplier must be a valid positive number greater than 0");
-        process.exit(1);
-      }
-    }
-
     await setupCommand({
       apiKey: options.apiKey,
       email: options.email,
       organizationName: options.organization,
       productName: options.product,
-      costMultiplier,
       endpoint: options.endpoint,
       skipShellUpdate: options.skipShellUpdate,
     });

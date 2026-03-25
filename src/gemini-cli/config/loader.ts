@@ -17,7 +17,6 @@ export interface GeminiCliConfig {
   email?: string;
   organizationName?: string;
   productName?: string;
-  costMultiplier?: number;
 }
 
 export function getConfigPath(): string {
@@ -79,22 +78,12 @@ export async function loadConfig(): Promise<GeminiCliConfig | null> {
 
     if (!apiKey) return null;
 
-    const costMultiplierStr = env[ENV_VARS.COST_MULTIPLIER];
-    let costMultiplier: number | undefined = undefined;
-    if (costMultiplierStr) {
-      const parsed = parseFloat(costMultiplierStr);
-      if (isFinite(parsed) && parsed > 0) {
-        costMultiplier = parsed;
-      }
-    }
-
     return {
       apiKey,
       endpoint: extractBaseEndpoint(fullEndpoint),
       email: env[ENV_VARS.SUBSCRIBER_EMAIL],
       organizationName: env[ENV_VARS.ORGANIZATION_NAME],
       productName: env[ENV_VARS.PRODUCT_NAME],
-      costMultiplier,
     };
   } catch {
     return null;

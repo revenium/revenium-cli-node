@@ -16,7 +16,6 @@ interface SetupOptions {
   email?: string;
   organizationName?: string;
   productName?: string;
-  costMultiplier?: number;
   endpoint?: string;
   skipShellUpdate?: boolean;
 }
@@ -150,19 +149,6 @@ async function collectConfiguration(options: SetupOptions): Promise<GeminiCliCon
     },
     {
       type: "input",
-      name: "costMultiplier",
-      message: "Cost multiplier (default: 1.0, optional):",
-      when: options.costMultiplier === undefined,
-      validate: (input: string) => {
-        if (!input) return true;
-        const num = Number(input.trim());
-        if (isNaN(num) || !isFinite(num)) return "Please enter a valid number";
-        if (num <= 0) return "Cost multiplier must be greater than 0";
-        return true;
-      },
-    },
-    {
-      type: "input",
       name: "endpoint",
       message: "Revenium API endpoint:",
       default: DEFAULT_REVENIUM_URL,
@@ -193,23 +179,12 @@ async function collectConfiguration(options: SetupOptions): Promise<GeminiCliCon
 
   endpoint = endpoint.replace(/\/+$/, "");
 
-  const costMultiplierStr =
-    options.costMultiplier !== undefined
-      ? options.costMultiplier.toString()
-      : answers.costMultiplier;
-  const costMultiplier =
-    costMultiplierStr && costMultiplierStr.toString().trim()
-      ? parseFloat(costMultiplierStr.toString())
-      : undefined;
-
   return {
     apiKey: options.apiKey || answers.apiKey,
     email: options.email || answers.email?.trim() || undefined,
     organizationName:
       options.organizationName?.trim() || answers.organizationName?.trim() || undefined,
     productName: options.productName?.trim() || answers.productName?.trim() || undefined,
-    costMultiplier:
-      costMultiplier !== undefined && !isNaN(costMultiplier) ? costMultiplier : undefined,
     endpoint,
   };
 }
