@@ -51,15 +51,6 @@ export async function loadConfig(): Promise<CursorConfig | null> {
       }
     }
 
-    const costMultiplierStr = env[ENV_KEYS.COST_MULTIPLIER];
-    let costMultiplierOverride: number | undefined;
-    if (costMultiplierStr) {
-      const parsed = parseFloat(costMultiplierStr);
-      if (isFinite(parsed) && parsed >= 0) {
-        costMultiplierOverride = parsed;
-      }
-    }
-
     return {
       cursorApiKey,
       reveniumApiKey,
@@ -70,7 +61,6 @@ export async function loadConfig(): Promise<CursorConfig | null> {
       syncIntervalMs,
       subscriptionTier:
         (env[ENV_KEYS.SUBSCRIPTION_TIER] as CursorConfig["subscriptionTier"]) || undefined,
-      costMultiplierOverride,
     };
   } catch {
     return null;

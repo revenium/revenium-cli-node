@@ -38,10 +38,6 @@ export async function statusCommand(): Promise<void> {
   if (config.productName) {
     console.log(`  Product:    ${config.productName}`);
   }
-  if (config.costMultiplier !== undefined) {
-    console.log(`  Cost Multiplier: ${config.costMultiplier}`);
-  }
-
   console.log("\n" + chalk.bold("Environment:"));
   const shellType = detectShell();
   const configFile = shellType === "fish" ? "~/.gemini/revenium.fish" : "~/.gemini/revenium.env";

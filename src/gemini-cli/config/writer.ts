@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeFile, mkdir, chmod } from "node:fs/promises";
-import { GEMINI_CONFIG_DIR, ENV_VARS, DEFAULT_COST_MULTIPLIER } from "../constants.js";
+import { GEMINI_CONFIG_DIR, ENV_VARS } from "../constants.js";
 import {
   CONFIG_FILE_MODE,
   REVENIUM_ENV_FILE,
@@ -21,8 +21,6 @@ function getGeminiConfigDir(): string {
 
 function buildResourceAttrs(config: GeminiCliConfig): string[] {
   const attrs: string[] = [`${REVENIUM_API_KEY_ATTR}=${config.apiKey}`];
-  const costMultiplier = config.costMultiplier ?? DEFAULT_COST_MULTIPLIER;
-  attrs.push(`cost_multiplier=${costMultiplier}`);
 
   if (config.email) {
     attrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
@@ -68,13 +66,6 @@ function generateEnvContent(config: GeminiCliConfig): string {
     lines.push(`export ${ENV_VARS.PRODUCT_NAME}=${escapeShellValue(config.productName)}`);
   }
 
-  if (config.costMultiplier !== undefined && config.costMultiplier !== DEFAULT_COST_MULTIPLIER) {
-    lines.push("");
-    lines.push(
-      `export ${ENV_VARS.COST_MULTIPLIER}=${escapeShellValue(config.costMultiplier.toString())}`,
-    );
-  }
-
   lines.push("");
   lines.push(`export ${ENV_VARS.RESOURCE_ATTRIBUTES}=${escapeShellValue(resourceAttrs.join(","))}`);
 
@@ -111,13 +102,6 @@ function generateFishContent(config: GeminiCliConfig): string {
   if (config.productName) {
     lines.push("");
     lines.push(`set -gx ${ENV_VARS.PRODUCT_NAME} ${escapeFishValue(config.productName)}`);
-  }
-
-  if (config.costMultiplier !== undefined && config.costMultiplier !== DEFAULT_COST_MULTIPLIER) {
-    lines.push("");
-    lines.push(
-      `set -gx ${ENV_VARS.COST_MULTIPLIER} ${escapeFishValue(config.costMultiplier.toString())}`,
-    );
   }
 
   lines.push("");

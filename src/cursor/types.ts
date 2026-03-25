@@ -9,7 +9,6 @@ export interface CursorConfig {
   productName?: string;
   syncIntervalMs: number;
   subscriptionTier?: SubscriptionTier;
-  costMultiplierOverride?: number;
 }
 
 export interface CursorUsageEvent {

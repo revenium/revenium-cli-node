@@ -33,10 +33,6 @@ function generateEnvContent(config: CursorConfig): string {
     lines.push(`${ENV_KEYS.SUBSCRIPTION_TIER}=${config.subscriptionTier}`);
   }
 
-  if (config.costMultiplierOverride !== undefined) {
-    lines.push(`${ENV_KEYS.COST_MULTIPLIER}=${config.costMultiplierOverride}`);
-  }
-
   lines.push("");
   return lines.join("\n");
 }
@@ -66,10 +62,6 @@ function generateFishContent(config: CursorConfig): string {
 
   if (config.subscriptionTier) {
     lines.push(`set -gx ${ENV_KEYS.SUBSCRIPTION_TIER} ${escapeFishValue(config.subscriptionTier)}`);
-  }
-
-  if (config.costMultiplierOverride !== undefined) {
-    lines.push(`set -gx ${ENV_KEYS.COST_MULTIPLIER} ${config.costMultiplierOverride}`);
   }
 
   lines.push("");
