@@ -1,6 +1,6 @@
 {
   "name": "@revenium/cli",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Unified Revenium CLI tools for Claude Code, Gemini CLI, and Cursor metering setup",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,27 +36,36 @@
   ],
   "author": "Revenium",
   "license": "MIT",
+  "homepage": "https://github.com/revenium/revenium-cli-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/revenium/revenium-cli-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/revenium/revenium-cli-node/issues"
+  },
   "dependencies": {
     "chalk": "^4.1.2",
-    "commander": "^13.1.0",
+    "commander": "^14.0.3",
     "inquirer": "^8.2.6",
     "ora": "^5.4.1"
   },
   "devDependencies": {
     "@types/inquirer": "^9.0.9",
     "@types/node": "^20.0.0",
-    "@vitest/coverage-v8": "^3.2.4",
-    "eslint": "^10.0.2",
+    "@vitest/coverage-v8": "^4.1.2",
+    "dotenv": "^17.4.0",
+    "eslint": "^10.1.0",
     "prettier": "^3.8.1",
     "typescript": "^5.0.0",
-    "typescript-eslint": "^8.56.1",
-    "vitest": "^3.0.0"
+    "typescript-eslint": "^8.58.0",
+    "vitest": "^4.1.2"
   },
   "files": [
     "dist/**/*",
     "!dist/**/*.map"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.19.0"
   }
 }
