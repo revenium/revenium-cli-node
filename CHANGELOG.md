@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-04-02
+
+### Changed
+
+- Update commander from v13 to v14
+- Update vitest from v3 to v4, @vitest/coverage-v8 from v3 to v4
+- Update dotenv from v16 to v17
+- Update eslint from v10.0 to v10.1, typescript-eslint from v8.56 to v8.58
+- Bump minimum Node.js engine from >=20.0.0 to >=20.19.0
+
+### Fixed
+
+- Resolve 4 security vulnerabilities (brace-expansion, flatted, lodash, picomatch)
+- Align @types/node range with minimum supported engine version
+
 ## [1.0.5] - 2026-03-31
 
 ### Changed
@@ -69,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.0.6]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.6
 [1.0.5]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.5
 [1.0.4]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.4
 [1.0.3]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.3
