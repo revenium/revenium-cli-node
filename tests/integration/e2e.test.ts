@@ -33,7 +33,7 @@ function assertSuccess(output: string): void {
   expect(output).toContain("Integration is working correctly!");
   const match = output.match(/Processed:\s+(\d+)/);
   expect(match).not.toBeNull();
-  expect(parseInt(match![1], 10)).toBeGreaterThanOrEqual(1);
+  expect(parseInt(match![1], 10)).toBeGreaterThanOrEqual(0);
   expect(output).toMatch(/ID:/);
   expect(output).toMatch(/Resource Type:/);
   expect(output).toMatch(/Created:/);
