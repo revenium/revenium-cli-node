@@ -85,7 +85,7 @@ jobs:
 
   report-results:
     needs: [check-version, run-e2e]
-    if: always() && needs.check-version.outputs.should-create == 'true'
+    if: always() && needs.check-version.outputs.version != ''
     runs-on: ubuntu-latest
     permissions:
       issues: write
