@@ -14,8 +14,6 @@ export const REQUIRED_LOG_ATTRIBUTE_KEYS = [
   "duration_ms",
 ] as const;
 
-export const REQUIRED_RESOURCE_ATTRIBUTE_KEYS = ["service.name"] as const;
-
 export const PROVIDER_SERVICE_NAMES = {
   "claude-code": "claude-code",
   "gemini-cli": "gemini-cli",

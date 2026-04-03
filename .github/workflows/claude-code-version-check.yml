@@ -93,11 +93,11 @@ jobs:
       - name: Report e2e results on tracking issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          E2E_RESULT: ${{ needs.run-e2e.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          VERSION="${{ needs.check-version.outputs.version }}"
-          E2E_RESULT="${{ needs.run-e2e.result }}"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
           if [ "$E2E_RESULT" = "success" ]; then
             STATUS="PASS"
           elif [ "$E2E_RESULT" = "skipped" ]; then
@@ -107,7 +107,7 @@ jobs:
           fi
 
           ISSUE_NUMBER=$(gh issue list \
-            --repo "${{ github.repository }}" \
+            --repo "$GH_REPO" \
             --search "Claude Code version $VERSION" \
             --state all \
             --json number \
@@ -115,7 +115,7 @@ jobs:
 
           if [ -n "$ISSUE_NUMBER" ] && [ "$ISSUE_NUMBER" != "null" ]; then
             gh issue comment "$ISSUE_NUMBER" \
-              --repo "${{ github.repository }}" \
+              --repo "$GH_REPO" \
               --body "### E2E Test Result: $STATUS
 
           [Workflow run]($RUN_URL)"
