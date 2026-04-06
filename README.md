@@ -498,6 +498,17 @@ npm run test:coverage    # Run tests with V8 coverage report
 npm run test:watch       # Run tests in watch mode
 ```
 
+### E2E Integration Tests
+
+E2E tests validate the full CLI flow for each provider against the live Revenium API. They run daily at 9:00 AM EST via GitHub Actions and can also be triggered manually.
+
+```bash
+export REVENIUM_E2E_API_KEY=hak_your_key_here
+npm run build && npm run test:e2e
+```
+
+See [TESTING.md](TESTING.md) for the full testing guide: architecture, environment variables, provider configurations, CI/CD workflows, and test helpers.
+
 ```bash
 npm run lint             # ESLint check
 npm run lint:fix         # ESLint auto-fix
