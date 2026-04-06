@@ -59,10 +59,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js ${{ inputs.node-version }}
+      - name: Use Node.js ${{ inputs.node-version || '20' }}
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ inputs.node-version }}
+          node-version: ${{ inputs.node-version || '20' }}
           cache: npm
 
       - run: npm ci
@@ -75,12 +75,12 @@ jobs:
         env:
           REVENIUM_E2E_API_KEY: ${{ secrets.REVENIUM_E2E_API_KEY }}
           REVENIUM_E2E_ENDPOINT: ${{ secrets.REVENIUM_E2E_ENDPOINT }}
-          REVENIUM_E2E_PROVIDER: ${{ inputs.provider }}
+          REVENIUM_E2E_PROVIDER: ${{ inputs.provider || 'all' }}
 
       - name: Upload test output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-output-node${{ inputs.node-version }}-${{ inputs.provider }}
+          name: e2e-output-node${{ inputs.node-version || '20' }}-${{ inputs.provider || 'all' }}
           path: e2e-output.txt
           if-no-files-found: ignore
