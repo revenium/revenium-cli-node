@@ -20,7 +20,7 @@ program
   .command("setup")
   .description("Interactive setup wizard to configure Cursor IDE metering")
   .option("--cursor-api-key <key>", "Cursor Admin API key")
-  .option("-k, --api-key <key>", "Revenium API key (hak_...)")
+  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")

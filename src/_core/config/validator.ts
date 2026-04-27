@@ -1,4 +1,4 @@
-import { API_KEY_PREFIX } from "../constants.js";
+import { API_KEY_PREFIXES } from "../constants.js";
 import type { ValidationResult } from "../types/index.js";
 
 export function validateApiKey(apiKey: string): ValidationResult {
@@ -9,13 +9,16 @@ export function validateApiKey(apiKey: string): ValidationResult {
     return { valid: false, errors };
   }
 
-  if (!apiKey.startsWith(API_KEY_PREFIX)) {
-    errors.push(`API key must start with "${API_KEY_PREFIX}"`);
+  const hasValidPrefix = API_KEY_PREFIXES.some((p) => apiKey.startsWith(p));
+  if (!hasValidPrefix) {
+    errors.push(`API key must start with "hak_" or "rev_"`);
   }
 
-  const parts = apiKey.split("_");
-  if (parts.length < 3) {
-    errors.push("API key format should be: hak_{tenant}_{key}");
+  if (apiKey.startsWith("hak_")) {
+    const parts = apiKey.split("_");
+    if (parts.length < 3) {
+      errors.push("Legacy API key format should be: hak_{tenant}_{key}");
+    }
   }
 
   if (apiKey.length < 12) {
