@@ -77,7 +77,7 @@ User runs CLI command
 Interactive Setup (Inquirer prompts)
        |
        v
-Validate inputs (API key hak_ prefix, email RFC, URL protocol)
+Validate inputs (API key hak_/rev_ prefix, email RFC, URL protocol)
        |
        v
 Test endpoint connectivity (OTLP health check with latency)
@@ -151,7 +151,7 @@ Create a `.env` file in your project root. See [`.env.example`](https://github.c
 Minimum required:
 
 ```env
-REVENIUM_API_KEY=hak_your_revenium_api_key_here
+REVENIUM_API_KEY=rev_mk_your_revenium_api_key_here
 REVENIUM_ENDPOINT=https://api.revenium.ai
 ```
 
@@ -162,7 +162,7 @@ revenium-metering setup
 ```
 
 The setup wizard will prompt for your API key, email, subscription tier, and endpoint. It automatically:
-1. Validates your API key format (`hak_` prefix)
+1. Validates your API key format (`hak_` or `rev_` prefix)
 2. Tests connectivity to the Revenium endpoint
 3. Writes configuration to `~/.claude/revenium.env`
 4. Updates your shell profile with the required environment variables
@@ -355,7 +355,7 @@ Imports historical Cursor usage data.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `REVENIUM_API_KEY` | Yes | Revenium API key (starts with `hak_`) |
+| `REVENIUM_API_KEY` | Yes | Revenium API key (starts with `hak_` or `rev_`) |
 | `REVENIUM_ENDPOINT` | No | API endpoint (default: `https://api.revenium.ai`) |
 | `REVENIUM_EMAIL` | No | Email for usage attribution |
 | `REVENIUM_ORGANIZATION_NAME` | No | Organization name for cost attribution |
@@ -405,7 +405,7 @@ import {
 
 | Function | Description |
 |----------|-------------|
-| `validateApiKey(key)` | Validate Revenium API key format (`hak_` prefix, min length) |
+| `validateApiKey(key)` | Validate Revenium API key format (`hak_` or `rev_` prefix, min length) |
 | `validateEmail(email)` | Validate email address format (RFC-compliant) |
 | `validateEndpointUrl(url)` | Validate endpoint URL format and protocol |
 
@@ -455,10 +455,10 @@ import type {
 
 ### Setup wizard fails
 
-1. Verify your API key starts with `hak_`
+1. Verify your API key starts with `hak_` or `rev_`
 2. Check internet connectivity to `https://api.revenium.ai`
 3. Run `status` command to verify existing configuration
-4. Try passing options directly: `revenium-metering setup --api-key hak_...`
+4. Try passing options directly: `revenium-metering setup --api-key rev_mk_...`
 
 ### Shell profile not updated
 

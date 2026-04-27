@@ -33,7 +33,7 @@ export function configExists(): boolean {
 }
 
 function extractApiKeyFromHeaders(headers: string): string | undefined {
-  const match = headers.match(/x-api-key=\s*(hak_[^\s"]+)/);
+  const match = headers.match(/x-api-key=\s*((?:hak_|rev_)[^\s"]+)/);
   return match?.[1];
 }
 

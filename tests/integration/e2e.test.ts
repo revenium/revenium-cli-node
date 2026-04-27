@@ -7,10 +7,22 @@ import { randomBytes } from "node:crypto";
 import { escapeDoubleQuotedShellValue } from "../../src/_core/shell/escaping.js";
 import { getFullOtlpEndpoint } from "../../src/_core/config/loader.js";
 
+const forceFailure = process.env.REVENIUM_E2E_FORCE_FAILURE === "true";
 const apiKey = process.env.REVENIUM_E2E_API_KEY;
 const baseEndpoint = process.env.REVENIUM_E2E_ENDPOINT || "https://api.revenium.ai";
 const provider = process.env.REVENIUM_E2E_PROVIDER ?? "all";
 const dist = resolve("dist");
+
+// INTERNAL ONLY - NEVER port this block to the public repo
+if (forceFailure) {
+  describe("forced failure", () => {
+    it("intentional failure for alert validation", () => {
+      expect.fail(
+        "REVENIUM_E2E_FORCE_FAILURE is enabled - this is an intentional failure to validate alerting",
+      );
+    });
+  });
+}
 
 function shouldSkip(name: string): boolean {
   if (!apiKey) return true;

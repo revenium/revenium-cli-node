@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-04-27
+
+### Added
+
+- Support for new `rev_` API key prefix (covers `rev_mk_`, `rev_sk_`, and future key types)
+- Updated setup prompts across all 3 CLIs with `rev_` hint
+
+### Changed
+
+- API key validator now accepts both `hak_` (legacy) and `rev_` (new) prefixes
+- Header extraction regex updated to match `rev_` prefixed keys
+- E2E test framework with force-failure flag for alert validation
+
 ## [1.0.6] - 2026-04-02
 
 ### Changed
@@ -84,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.0.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.7
 [1.0.6]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.6
 [1.0.5]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.5
 [1.0.4]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.4

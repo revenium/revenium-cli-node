@@ -190,7 +190,7 @@ async function collectConfiguration(options: SetupOptions): Promise<CursorConfig
         {
           type: "password",
           name: "reveniumApiKey",
-          message: "Enter your Revenium API key (hak_...):",
+          message: "Enter your Revenium API key (hak_... or rev_...):",
           when: !options.reveniumApiKey,
           validate: (input: string) => {
             const result = validateApiKey(input);

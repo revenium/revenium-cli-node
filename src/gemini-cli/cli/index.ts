@@ -16,7 +16,7 @@ program
 program
   .command("setup")
   .description("Interactive setup wizard to configure Gemini CLI metering")
-  .option("-k, --api-key <key>", "Revenium API key (hak_...)")
+  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")

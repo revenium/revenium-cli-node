@@ -17,7 +17,7 @@ program
 program
   .command("setup")
   .description("Interactive setup wizard to configure Claude Code metering")
-  .option("-k, --api-key <key>", "Revenium API key (hak_...)")
+  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-t, --tier <tier>", "Subscription tier")
   .option("--endpoint <url>", "Revenium API endpoint URL")

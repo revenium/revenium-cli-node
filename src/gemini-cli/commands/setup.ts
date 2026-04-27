@@ -102,7 +102,7 @@ async function collectConfiguration(options: SetupOptions): Promise<GeminiCliCon
     {
       type: "password",
       name: "apiKey",
-      message: "Enter your Revenium API key:",
+      message: "Enter your Revenium API key (hak_... or rev_...):",
       when: !options.apiKey,
       validate: (input: string) => {
         const result = validateApiKey(input);

@@ -23,6 +23,11 @@ on:
         options:
           - "20"
           - "22"
+      force-failure:
+        description: "INTERNAL ONLY - Force test failure to validate alerts. NEVER port to public repo."
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       provider:
@@ -76,6 +81,7 @@ jobs:
           REVENIUM_E2E_API_KEY: ${{ secrets.REVENIUM_E2E_API_KEY }}
           REVENIUM_E2E_ENDPOINT: ${{ secrets.REVENIUM_E2E_ENDPOINT }}
           REVENIUM_E2E_PROVIDER: ${{ inputs.provider || 'all' }}
+          REVENIUM_E2E_FORCE_FAILURE: ${{ inputs.force-failure || 'false' }}
 
       - name: Upload test output
         if: always()

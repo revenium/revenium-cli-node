@@ -12,19 +12,36 @@ describe("validateApiKey", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("accepts valid rev_mk_ key", () => {
+    const result = validateApiKey(
+      "rev_mk_3By1Ra6_a67381718cc44dc5748badea5e8ee5b64842c656427df65e538da31ddf13dc62",
+    );
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts valid rev_sk_ key", () => {
+    const result = validateApiKey(
+      "rev_sk_3By1Ra6_aaca4fbe6b09877bcbe186f52e477537bfb1d42e5456b9548c84dffe3aa7d62a",
+    );
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it("rejects empty key", () => {
     const result = validateApiKey("");
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("API key is required");
   });
 
-  it("rejects key without hak_ prefix", () => {
+  it("rejects key without valid prefix", () => {
     const result = validateApiKey("invalid_tenant_key");
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toContain("hak_");
+    expect(result.errors[0]).toContain("rev_");
   });
 
-  it("rejects key with fewer than 3 underscore parts", () => {
+  it("rejects hak_ key with fewer than 3 underscore parts", () => {
     const result = validateApiKey("hak_shortkey");
     expect(result.valid).toBe(false);
     expect(result.errors).toEqual(
