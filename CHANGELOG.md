@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-05-01
+
+### Added
+
+- `--delay <ms>` option for Cursor backfill to mitigate rate limiting (0-60000ms range, warning for >10s)
+- Shared retry handler (`_core/api/retry-handler.ts`) with exponential backoff for batch sending
+- Retry logic with exponential backoff (1s/2s/4s) for Cursor backfill batch sends
+- Per-batch failure tracking with detailed error reporting for Cursor backfill
+
+### Changed
+
+- Extract `sendBatchWithRetry` and `isRetryableError` from Claude Code backfill to shared `_core/api/` module
+- Export `MAX_RETRIES` constant from retry handler for consistent usage across CLIs
+- Verbose mode now logs all retry attempts including the final failure
+
+### Fixed
+
+- Cursor backfill no longer silently swallows batch send errors
+
 ## [1.0.7] - 2026-04-27
 
 ### Added
@@ -97,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.0.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.8
 [1.0.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.7
 [1.0.6]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.6
 [1.0.5]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.5
