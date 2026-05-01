@@ -29,6 +29,7 @@ A professional-grade set of CLI tools that configure automatic AI usage tracking
 |-- _core/                  Shared infrastructure across all CLIs
 |   |-- api/
 |   |   |-- otlp-client     OTLP HTTP client (retry, backoff, 30s timeout)
+|   |   |-- retry-handler   Shared batch retry with exponential backoff
 |   |   +-- health-check    Endpoint connectivity testing
 |   |-- config/
 |   |   |-- validator        API key, email, URL validation
@@ -240,8 +241,8 @@ Imports historical usage data from Claude Code JSONL files (`~/.claude/projects/
 |--------|-------------|
 | `--since <date>` | Import since date (ISO format or relative: `7d`, `1m`, `3m`) |
 | `--dry-run` | Preview records without sending |
-| `--batch-size <n>` | Records per batch (default: 50) |
-| `--delay <ms>` | Delay between batches in ms (default: 1000) |
+| `--batch-size <n>` | Records per batch, max 100 (default: 10) |
+| `--delay <ms>` | Minimum delay between batches in ms (default: 0) |
 | `--verbose` | Show per-record details |
 
 ### Gemini CLI (`revenium-gemini`)
@@ -324,7 +325,8 @@ Imports historical Cursor usage data.
 | `--since <date>` | Import since date |
 | `--to <date>` | Import until date |
 | `--dry-run` | Preview without sending |
-| `--batch-size <n>` | Records per batch |
+| `--batch-size <n>` | Records per batch, max 100 (default: 10) |
+| `--delay <ms>` | Minimum delay between batches in ms (default: 0) |
 | `--verbose` | Show per-record details |
 
 ## Subscription Tiers

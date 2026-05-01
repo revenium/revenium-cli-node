@@ -93,6 +93,7 @@ program
   .option("--to <date>", "End date (ISO 8601, defaults to now)")
   .option("--dry-run", "Preview without sending data")
   .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
+  .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
   .option("-v, --verbose", "Show detailed output")
   .action(async (options) => {
     const batchSize = parseInt(options.batchSize, 10);
@@ -101,11 +102,22 @@ program
       process.exit(1);
     }
 
+    const delay = parseInt(options.delay, 10);
+    if (!Number.isFinite(delay) || delay < 0 || delay > 60000) {
+      console.error("Error: --delay must be between 0 and 60000 milliseconds");
+      process.exit(1);
+    }
+
+    if (delay > 10000) {
+      console.warn("Warning: large delay values will significantly increase backfill time");
+    }
+
     await backfillCommand({
       since: options.since,
       to: options.to,
       dryRun: options.dryRun,
       batchSize,
+      delay,
       verbose: options.verbose,
     });
   });

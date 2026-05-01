@@ -2,7 +2,6 @@ import chalk from "chalk";
 import ora from "ora";
 import { loadConfig, configExists } from "../config/loader.js";
 import { fetchEvents } from "../core/cursor-client.js";
-import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
 import { buildOtlpPayload, isValidTimestamp } from "../core/transform/otlp-mapper.js";
 import { computeEventHash, Deduplicator } from "../core/sync/deduplicator.js";
 import {
@@ -11,6 +10,7 @@ import {
   MAX_BATCH_SIZE,
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
+import { sendBatchWithRetry, MAX_RETRIES } from "../../_core/api/retry-handler.js";
 import type { CursorUsageEvent } from "../types.js";
 
 export interface BackfillOptions {
@@ -18,6 +18,7 @@ export interface BackfillOptions {
   to?: string;
   dryRun?: boolean;
   batchSize?: number;
+  delay?: number;
   verbose?: boolean;
 }
 
@@ -66,6 +67,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     to,
     dryRun = false,
     batchSize: rawBatchSize = DEFAULT_BATCH_SIZE,
+    delay = 0,
     verbose = false,
   } = options;
 
@@ -227,31 +229,50 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
   let sentBatches = 0;
   let sentRecords = 0;
-  let failedBatches = 0;
+  let permanentlyFailedBatches = 0;
+  const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
   const rateLimiterState = createRateLimiterState();
 
   for (let i = 0; i < sendableEvents.length; i += batchSize) {
+    const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = sendableEvents.slice(i, i + batchSize);
     const payload = buildOtlpPayload(batch, config);
 
-    await enforceRateLimit(rateLimiterState, { batchSize: batch.length });
-    sendSpinner.text = `Sending batch ${sentBatches + failedBatches + 1}/${totalBatches}...`;
+    await enforceRateLimit(rateLimiterState, { batchSize: batch.length, userDelayMs: delay });
+    sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
-    try {
-      await sendOtlpLogs(config.reveniumEndpoint, config.reveniumApiKey, payload);
+    const result = await sendBatchWithRetry(
+      config.reveniumEndpoint,
+      config.reveniumApiKey,
+      payload,
+      MAX_RETRIES,
+      verbose,
+    );
+
+    if (result.success) {
       sentBatches++;
       sentRecords += batch.length;
-    } catch {
-      failedBatches++;
+      sendSpinner.text = `Sending data... (${sentBatches}/${totalBatches} batches)`;
+    } else {
+      permanentlyFailedBatches++;
+      failedBatchDetails.push({
+        batchNumber,
+        error: result.error || "Unknown error",
+      });
     }
   }
 
-  if (failedBatches === 0) {
+  if (permanentlyFailedBatches === 0) {
     sendSpinner.succeed(`Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches`);
   } else {
     sendSpinner.warn(
-      `Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches (${failedBatches} failed)`,
+      `Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches (${permanentlyFailedBatches} failed)`,
     );
+
+    console.log("\n" + chalk.red.bold("Failed Batches:"));
+    for (const failed of failedBatchDetails) {
+      console.log(chalk.red(`  Batch ${failed.batchNumber}: ${failed.error}`));
+    }
   }
 
   console.log("\n" + chalk.green.bold("Backfill complete!"));
