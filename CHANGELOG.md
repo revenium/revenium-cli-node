@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Unused Cursor-specific fields from OTLP payload (`cursorComposerData`, `cursorConversationId`, `bubbleId` from types and OTLP mapper)
+- Unused Cursor-specific fields from OTLP payload (`cursorTokenFee`, `requestsCosts`, `isTokenBasedCall`, `maxMode`, `isChargeable`, `isHeadless` from types; `cursor.token_fee`, `cursor.requests_costs`, `cursor.is_token_based` from OTLP mapper)
 
 ## [1.0.8] - 2026-05-01
 
