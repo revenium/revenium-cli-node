@@ -22,13 +22,7 @@ export interface CursorUsageEvent {
     cacheReadTokens: number;
     totalCents: number;
   } | null;
-  cursorTokenFee: number;
-  requestsCosts: number;
-  isTokenBasedCall: boolean;
   userEmail: string;
-  maxMode: boolean;
-  isChargeable: boolean;
-  isHeadless: boolean;
 }
 
 export interface CursorPaginatedResponse {
