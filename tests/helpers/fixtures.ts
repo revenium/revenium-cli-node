@@ -22,13 +22,7 @@ export function createUsageEvent(overrides: Partial<CursorUsageEvent> = {}): Cur
       cacheReadTokens: 20,
       totalCents: 5,
     },
-    cursorTokenFee: 0.01,
-    requestsCosts: 0.05,
-    isTokenBasedCall: true,
     userEmail: "dev@company.com",
-    maxMode: false,
-    isChargeable: true,
-    isHeadless: false,
     ...overrides,
   };
 }

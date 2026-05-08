@@ -26,13 +26,6 @@ export const PROVIDER_BODY_PATTERNS = {
   cursor: "cursor_ide.api_response",
 } as const;
 
-export const CURSOR_SPECIFIC_ATTRIBUTE_KEYS = [
-  "billing.kind",
-  "cursor.token_fee",
-  "cursor.requests_costs",
-  "cursor.is_token_based",
-] as const;
-
 export type ProviderName = keyof typeof PROVIDER_SERVICE_NAMES;
 
 export function createProviderTestPayload(provider: ProviderName): OTLPLogsPayload {

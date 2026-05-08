@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2026-05-08
+
+### Removed
+
+- Unused Cursor-specific fields from OTLP payload (`cursorTokenFee`, `requestsCosts`, `isTokenBasedCall`, `maxMode`, `isChargeable`, `isHeadless` from types; `cursor.token_fee`, `cursor.requests_costs`, `cursor.is_token_based` from OTLP mapper)
+
 ## [1.0.8] - 2026-05-01
 
 ### Added
@@ -116,6 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.0.9]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.9
 [1.0.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.8
 [1.0.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.7
 [1.0.6]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.6

@@ -37,18 +37,6 @@ function mapEventToLogRecord(
     },
     { key: "user.email", value: { stringValue: event.userEmail } },
     { key: "billing.kind", value: { stringValue: event.kind } },
-    {
-      key: "cursor.token_fee",
-      value: { stringValue: String(event.cursorTokenFee) },
-    },
-    {
-      key: "cursor.requests_costs",
-      value: { stringValue: String(event.requestsCosts) },
-    },
-    {
-      key: "cursor.is_token_based",
-      value: { stringValue: String(event.isTokenBasedCall) },
-    },
   ];
 
   return {
