@@ -1,0 +1,136 @@
+#!/usr/bin/env node
+
+import { Command } from "commander";
+import { setupCommand } from "../commands/setup.js";
+import { statusCommand } from "../commands/status.js";
+import { testCommand } from "../commands/test.js";
+import { syncCommand } from "../commands/sync.js";
+import { resetCommand } from "../commands/reset.js";
+import { backfillCommand } from "../commands/backfill.js";
+import pkg from "../../../package.json";
+
+export const program = new Command();
+
+program
+  .name("revenium-copilot")
+  .description("Sync GitHub Copilot usage telemetry to Revenium")
+  .version(pkg.version);
+
+program
+  .command("setup")
+  .description("Interactive setup wizard to configure GitHub Copilot metering")
+  .option("--github-token <token>", "GitHub personal access token")
+  .option("--github-org <org>", "GitHub organization slug")
+  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
+  .option("-e, --email <email>", "Email for usage attribution")
+  .option("-o, --organization <name>", "Organization name for cost attribution")
+  .option("-p, --product <name>", "Product name for cost attribution")
+  .option("--endpoint <url>", "Revenium API endpoint URL")
+  .option(
+    "--subscription-tier <tier>",
+    "Copilot subscription tier (individual, business, enterprise)",
+  )
+  .option("--sync-interval <minutes>", "Sync interval in minutes (default: 5)")
+  .action(async (options) => {
+    let syncInterval: number | undefined = undefined;
+    if (options.syncInterval) {
+      const minutes = parseFloat(options.syncInterval);
+      if (isNaN(minutes) || minutes <= 0) {
+        console.error("Error: --sync-interval must be a positive number");
+        process.exit(1);
+      }
+      syncInterval = minutes * 60 * 1000;
+    }
+
+    await setupCommand({
+      githubToken: options.githubToken,
+      githubOrg: options.githubOrg,
+      reveniumApiKey: options.apiKey,
+      email: options.email,
+      organizationName: options.organization,
+      productName: options.product,
+      endpoint: options.endpoint,
+      subscriptionTier: options.subscriptionTier,
+      syncInterval,
+    });
+  });
+
+program
+  .command("status")
+  .description("Check current configuration, sync state, and connectivity")
+  .action(async () => {
+    await statusCommand();
+  });
+
+program
+  .command("test")
+  .description("Send a test metric to verify the Revenium integration")
+  .option("-v, --verbose", "Show detailed payload information")
+  .action(async (options) => {
+    await testCommand({ verbose: options.verbose });
+  });
+
+program
+  .command("sync")
+  .description("Sync GitHub Copilot usage events to Revenium")
+  .option("-w, --watch", "Run continuously with configured interval")
+  .option("--from <date>", "Start date for sync range (YYYY-MM-DD)")
+  .option("--to <date>", "End date for sync range (YYYY-MM-DD)")
+  .option("--dry-run", "Output OTLP JSON without sending data")
+  .action(async (options) => {
+    await syncCommand({
+      watch: options.watch,
+      from: options.from,
+      to: options.to,
+      dryRun: options.dryRun,
+    });
+  });
+
+program
+  .command("reset")
+  .description("Reset sync state to force a fresh sync")
+  .action(async () => {
+    await resetCommand();
+  });
+
+program
+  .command("backfill")
+  .description(
+    "Import historical GitHub Copilot usage data to Revenium (max 28 days via GitHub API)",
+  )
+  .option("--since <date>", "Start date (ISO 8601 or relative: 7d, 1m, 1y)")
+  .option("--to <date>", "End date (ISO 8601, defaults to now)")
+  .option("--dry-run", "Preview without sending data")
+  .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
+  .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
+  .option("-v, --verbose", "Show detailed output")
+  .action(async (options) => {
+    const batchSize = parseInt(options.batchSize, 10);
+    if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 100) {
+      console.error("Error: --batch-size must be between 1 and 100");
+      process.exit(1);
+    }
+
+    const delay = parseInt(options.delay, 10);
+    if (!Number.isFinite(delay) || delay < 0 || delay > 60000) {
+      console.error("Error: --delay must be between 0 and 60000 milliseconds");
+      process.exit(1);
+    }
+
+    if (delay > 10000) {
+      console.warn("Warning: large delay values will significantly increase backfill time");
+    }
+
+    await backfillCommand({
+      since: options.since,
+      to: options.to,
+      dryRun: options.dryRun,
+      batchSize,
+      delay,
+      verbose: options.verbose,
+    });
+  });
+
+if (process.env.NODE_ENV !== "test") {
+  program.parse();
+}

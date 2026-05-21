@@ -224,7 +224,7 @@ export function createOtlpPayload(
 
       const attributes: Array<{
         key: string;
-        value: { stringValue?: string; intValue?: number };
+        value: { stringValue: string };
       }> = [
         {
           key: "transaction_id",
@@ -232,15 +232,15 @@ export function createOtlpPayload(
         },
         { key: "session.id", value: { stringValue: record.sessionId } },
         { key: "model", value: { stringValue: record.model } },
-        { key: "input_tokens", value: { intValue: record.inputTokens } },
-        { key: "output_tokens", value: { intValue: record.outputTokens } },
+        { key: "input_tokens", value: { stringValue: String(record.inputTokens) } },
+        { key: "output_tokens", value: { stringValue: String(record.outputTokens) } },
         {
           key: "cache_read_tokens",
-          value: { intValue: record.cacheReadTokens },
+          value: { stringValue: String(record.cacheReadTokens) },
         },
         {
           key: "cache_creation_tokens",
-          value: { intValue: record.cacheCreationTokens },
+          value: { stringValue: String(record.cacheCreationTokens) },
         },
       ];
 

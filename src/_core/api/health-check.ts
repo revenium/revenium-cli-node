@@ -5,6 +5,8 @@ export interface TestPayloadOptions {
   email?: string;
   organizationName?: string;
   productName?: string;
+  bodyValue?: string;
+  scopeName?: string;
 }
 
 export function generateTestSessionId(): string {
@@ -93,13 +95,13 @@ export function createTestPayload(
         scopeLogs: [
           {
             scope: {
-              name: serviceName,
+              name: options?.scopeName ?? serviceName,
               version: "1.0.0",
             },
             logRecords: [
               {
                 timeUnixNano: now.toString(),
-                body: { stringValue: `${serviceName}.api_request` },
+                body: { stringValue: options?.bodyValue ?? `${serviceName}.api_request` },
                 attributes: logAttributes,
               },
             ],

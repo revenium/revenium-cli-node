@@ -9,6 +9,7 @@ const binEntries = [
   { name: "revenium-metering", path: "claude-code/cli/index.js" },
   { name: "revenium-gemini", path: "gemini-cli/cli/index.js" },
   { name: "revenium-cursor", path: "cursor/cli/index.js" },
+  { name: "revenium-copilot", path: "copilot/cli/index.js" },
 ];
 
 describe("CLI binaries", () => {

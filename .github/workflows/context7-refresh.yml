@@ -1,0 +1,93 @@
+name: Context7 Refresh
+
+on:
+  workflow_call:
+    inputs:
+      library-id:
+        required: true
+        type: string
+      source:
+        required: false
+        type: string
+        default: 'manual'
+    outputs:
+      status:
+        description: 'Refresh result: success or failure'
+        value: ${{ jobs.refresh.outputs.status }}
+
+  workflow_dispatch:
+    inputs:
+      library-id:
+        description: 'Context7 library ID to refresh'
+        required: true
+        type: string
+      source:
+        description: 'Trigger source identifier'
+        required: false
+        type: string
+        default: 'manual'
+
+permissions: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.refresh.outputs.status }}
+
+    steps:
+      - name: Mask API Key
+        run: echo "::add-mask::${{ secrets.CONTEXT7_API_KEY_REVENIUM }}"
+
+      - name: Refresh Context7 Index
+        id: refresh
+        env:
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY_REVENIUM }}
+          LIBRARY_ID: ${{ inputs.library-id }}
+        run: |
+          payload=$(jq -n --arg id "$LIBRARY_ID" '{"libraryId": $id}')
+
+          response=$(curl -s -w "\n%{http_code}" \
+            --max-time 30 \
+            --retry 2 --retry-delay 5 --retry-max-time 60 \
+            -X POST "https://context7.com/api/v2/refresh" \
+            -H "Authorization: Bearer ${CONTEXT7_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "Context7 refreshed: ${LIBRARY_ID}"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "::error::Context7 refresh failed (HTTP ${http_code}): $(echo "${body}" | head -c 200)"
+            exit 1
+          fi
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
+          LIBRARY_ID: ${{ inputs.library-id }}
+          SOURCE_ID: ${{ inputs.source }}
+        run: |
+          payload=$(jq -n \
+            --arg channel "$SLACK_USER_ID" \
+            --arg library "$LIBRARY_ID" \
+            --arg source "$SOURCE_ID" \
+            --arg repo "${{ github.repository }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{channel: $channel, text: (":warning: *Context7 Refresh Failed*\n\n*Library:* " + $library + "\n*Source:* " + $source + "\n*Repo:* " + $repo + "\n*Run:* " + $run_url)}')
+
+          slack_response=$(curl -s -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          if ! echo "$slack_response" | jq -e '.ok' > /dev/null 2>&1; then
+            echo "::warning::Slack notification delivery failed: $(echo "$slack_response" | jq -r '.error // "unknown error"')"
+          fi

@@ -1,0 +1,24 @@
+name: Context7 Docs Refresh (Scheduled)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  refresh-docs:
+    strategy:
+      matrix:
+        include:
+          - library-id: '/websites/revenium_readme_io'
+            source: 'docs-cron-readme'
+          - library-id: '/websites/revenium_io'
+            source: 'docs-cron-gitbook'
+      fail-fast: false
+
+    continue-on-error: true
+    uses: ./.github/workflows/context7-refresh.yml
+    with:
+      library-id: ${{ matrix.library-id }}
+      source: ${{ matrix.source }}
+    secrets: inherit

@@ -1,0 +1,282 @@
+import chalk from "chalk";
+import ora from "ora";
+import { loadConfig, configExists } from "../config/loader.js";
+import { fetchUsageDays } from "../core/github-client.js";
+import { buildOtlpPayload, isValidDay } from "../core/transform/otlp-mapper.js";
+import { computeBreakdownHash, Deduplicator } from "../core/sync/deduplicator.js";
+import {
+  createRateLimiterState,
+  enforceRateLimit,
+  MAX_BATCH_SIZE,
+  DEFAULT_BATCH_SIZE,
+} from "../../_core/api/rate-limiter.js";
+import { sendTraceBatchWithRetry, MAX_RETRIES } from "../../_core/api/retry-handler.js";
+import type { CopilotUsageDay } from "../types.js";
+
+export interface BackfillOptions {
+  since?: string;
+  to?: string;
+  dryRun?: boolean;
+  batchSize?: number;
+  delay?: number;
+  verbose?: boolean;
+}
+
+export function parseRelativeDate(input: string): Date | null {
+  const match = input.match(/^(\d+)([dmwMy])$/);
+  if (!match) return null;
+
+  const amount = parseInt(match[1], 10);
+  const unit = match[2];
+  const now = new Date();
+
+  switch (unit) {
+    case "d":
+      now.setDate(now.getDate() - amount);
+      break;
+    case "w":
+      now.setDate(now.getDate() - amount * 7);
+      break;
+    case "m":
+    case "M":
+      now.setMonth(now.getMonth() - amount);
+      break;
+    case "y":
+      now.setFullYear(now.getFullYear() - amount);
+      break;
+    default:
+      return null;
+  }
+
+  return now;
+}
+
+export function parseSinceDate(since: string): Date | null {
+  const relativeDate = parseRelativeDate(since);
+  if (relativeDate) return relativeDate;
+
+  const isoDate = new Date(since);
+  if (!isNaN(isoDate.getTime())) return isoDate;
+
+  return null;
+}
+
+function formatDateParam(date: Date): string {
+  return date.toISOString().split("T")[0];
+}
+
+export async function backfillCommand(options: BackfillOptions = {}): Promise<void> {
+  const {
+    since,
+    to,
+    dryRun = false,
+    batchSize: rawBatchSize = DEFAULT_BATCH_SIZE,
+    delay = 0,
+    verbose = false,
+  } = options;
+
+  if (!Number.isInteger(rawBatchSize) || rawBatchSize < 1) {
+    console.log(chalk.red("Error: --batch-size must be a positive integer"));
+    process.exit(1);
+  }
+
+  const batchSize = Math.min(rawBatchSize, MAX_BATCH_SIZE);
+  if (rawBatchSize > MAX_BATCH_SIZE) {
+    console.log(
+      chalk.yellow(
+        `batch-size=${rawBatchSize} exceeds maximum of ${MAX_BATCH_SIZE}. Using ${MAX_BATCH_SIZE}.`,
+      ),
+    );
+  }
+
+  console.log(chalk.bold("\nRevenium GitHub Copilot Backfill\n"));
+
+  if (dryRun) {
+    console.log(chalk.yellow("Running in dry-run mode - no data will be sent\n"));
+  }
+
+  if (!configExists()) {
+    console.log(chalk.red("Configuration not found"));
+    console.log(chalk.yellow("Run `revenium-copilot setup` first to configure the integration."));
+    process.exit(1);
+  }
+
+  const config = await loadConfig();
+  if (!config) {
+    console.log(chalk.red("Could not load configuration"));
+    process.exit(1);
+  }
+
+  let sinceDate: Date;
+  if (since) {
+    const parsed = parseSinceDate(since);
+    if (!parsed) {
+      console.log(chalk.red(`Invalid --since value: ${since}`));
+      console.log(chalk.dim("Use ISO format (2024-01-15) or relative format (7d, 1m, 1y)"));
+      process.exit(1);
+    }
+    sinceDate = parsed;
+    console.log(chalk.dim(`Fetching records since: ${sinceDate.toISOString()}\n`));
+  } else {
+    sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - 28);
+    console.log(chalk.dim("No --since specified, defaulting to last 28 days (GitHub API limit)\n"));
+  }
+
+  let toDate: Date;
+  if (to) {
+    toDate = new Date(to);
+    if (isNaN(toDate.getTime())) {
+      console.log(chalk.red(`Invalid --to value: ${to}`));
+      process.exit(1);
+    }
+  } else {
+    toDate = new Date();
+  }
+
+  const fetchSpinner = ora("Fetching historical usage data from GitHub API...").start();
+  const allDays: CopilotUsageDay[] = [];
+
+  try {
+    for await (const batch of fetchUsageDays(
+      config.githubToken,
+      config.githubOrg,
+      formatDateParam(sinceDate),
+      formatDateParam(toDate),
+    )) {
+      allDays.push(...batch);
+      fetchSpinner.text = `Fetching usage data... (${allDays.length} days so far)`;
+    }
+    fetchSpinner.succeed(`Fetched ${allDays.length} days of usage data from GitHub API`);
+  } catch (error) {
+    fetchSpinner.fail("Failed to fetch usage data from GitHub API");
+    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));
+    process.exit(1);
+  }
+
+  if (allDays.length === 0) {
+    console.log(chalk.yellow("\nNo usage data found in the specified date range."));
+    if (since) {
+      console.log(chalk.dim("Try a broader date range or remove the --since filter."));
+    }
+    return;
+  }
+
+  const deduplicator = new Deduplicator([]);
+  const uniqueDays: CopilotUsageDay[] = [];
+  let totalBreakdowns = 0;
+  let duplicateBreakdowns = 0;
+
+  for (const day of allDays) {
+    if (!isValidDay(day.day)) continue;
+
+    const uniqueBreakdowns = [];
+    for (const breakdown of day.breakdown) {
+      totalBreakdowns++;
+      const hash = computeBreakdownHash(day, breakdown);
+      if (deduplicator.isDuplicate(hash)) {
+        duplicateBreakdowns++;
+        continue;
+      }
+      deduplicator.mark(hash);
+      uniqueBreakdowns.push(breakdown);
+    }
+
+    if (uniqueBreakdowns.length > 0) {
+      uniqueDays.push({ ...day, breakdown: uniqueBreakdowns });
+    }
+  }
+
+  const uniqueBreakdownCount = totalBreakdowns - duplicateBreakdowns;
+
+  if (uniqueBreakdownCount === 0) {
+    console.log(chalk.yellow("\nAll fetched records were duplicates. Nothing to backfill."));
+    return;
+  }
+
+  const totalSuggestions = uniqueDays.reduce(
+    (sum, d) => sum + d.breakdown.reduce((s, b) => s + b.suggestions_count, 0),
+    0,
+  );
+  const totalAcceptances = uniqueDays.reduce(
+    (sum, d) => sum + d.breakdown.reduce((s, b) => s + b.acceptances_count, 0),
+    0,
+  );
+
+  console.log("\n" + chalk.bold("Summary:"));
+  console.log(`  Days fetched:     ${allDays.length}`);
+  console.log(`  Total records:    ${totalBreakdowns.toLocaleString()}`);
+  console.log(`  Unique records:   ${uniqueBreakdownCount.toLocaleString()}`);
+  if (duplicateBreakdowns > 0) {
+    console.log(`  Duplicates:       ${duplicateBreakdowns.toLocaleString()}`);
+  }
+  console.log(`  Suggestions:      ${totalSuggestions.toLocaleString()}`);
+  console.log(`  Acceptances:      ${totalAcceptances.toLocaleString()}`);
+
+  if (dryRun) {
+    console.log("\n" + chalk.yellow("Dry run complete. Use without --dry-run to send data."));
+
+    if (verbose) {
+      console.log("\n" + chalk.dim("Sample OTLP payload (first batch):"));
+      const sampleDays = uniqueDays.slice(0, Math.min(batchSize, 3));
+      const samplePayload = buildOtlpPayload(sampleDays, config);
+      console.log(chalk.dim(JSON.stringify(samplePayload, null, 2)));
+    }
+    return;
+  }
+
+  const totalBatches = Math.ceil(uniqueDays.length / batchSize);
+  const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
+  let sentBatches = 0;
+  let sentRecords = 0;
+  let permanentlyFailedBatches = 0;
+  const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
+  const rateLimiterState = createRateLimiterState();
+
+  for (let i = 0; i < uniqueDays.length; i += batchSize) {
+    const batchNumber = Math.floor(i / batchSize) + 1;
+    const batch = uniqueDays.slice(i, i + batchSize);
+    const payload = buildOtlpPayload(batch, config);
+    const batchRecordCount = batch.reduce((sum, d) => sum + d.breakdown.length, 0);
+
+    await enforceRateLimit(rateLimiterState, { batchSize: batchRecordCount, userDelayMs: delay });
+    sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
+
+    const result = await sendTraceBatchWithRetry(
+      config.reveniumEndpoint,
+      config.reveniumApiKey,
+      payload,
+      MAX_RETRIES,
+      verbose,
+    );
+
+    if (result.success) {
+      sentBatches++;
+      sentRecords += batchRecordCount;
+      sendSpinner.text = `Sending data... (${sentBatches}/${totalBatches} batches)`;
+    } else {
+      permanentlyFailedBatches++;
+      failedBatchDetails.push({
+        batchNumber,
+        error: result.error || "Unknown error",
+      });
+    }
+  }
+
+  if (permanentlyFailedBatches === 0) {
+    sendSpinner.succeed(`Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches`);
+  } else {
+    sendSpinner.warn(
+      `Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches (${permanentlyFailedBatches} failed)`,
+    );
+
+    console.log("\n" + chalk.red.bold("Failed Batches:"));
+    for (const failed of failedBatchDetails) {
+      console.log(chalk.red(`  Batch ${failed.batchNumber}: ${failed.error}`));
+    }
+  }
+
+  console.log("\n" + chalk.green.bold("Backfill complete!"));
+  console.log(chalk.dim("Check your Revenium dashboard to see the imported data."));
+  console.log("");
+}
