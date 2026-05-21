@@ -49,7 +49,37 @@ export interface OTLPLogsPayload {
       };
       logRecords: Array<{
         timeUnixNano?: string;
+        observedTimeUnixNano?: string;
         body: OTLPValue;
+        attributes: Array<{
+          key: string;
+          value: OTLPValue;
+        }>;
+      }>;
+    }>;
+  }>;
+}
+
+export interface OTLPTracesPayload {
+  resourceSpans: Array<{
+    resource?: {
+      attributes?: Array<{
+        key: string;
+        value: OTLPValue;
+      }>;
+    };
+    scopeSpans: Array<{
+      scope?: {
+        name: string;
+        version: string;
+      };
+      spans: Array<{
+        traceId: string;
+        spanId: string;
+        name: string;
+        kind: number;
+        startTimeUnixNano: string;
+        endTimeUnixNano: string;
         attributes: Array<{
           key: string;
           value: OTLPValue;

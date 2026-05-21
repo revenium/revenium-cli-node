@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-21
+
+### Added
+
+- GitHub Copilot CLI (`revenium-copilot`) with `setup`, `status`, `test`, `sync`, `backfill`, and `reset` commands
+- GitHub Copilot usage sync engine with GitHub API integration, deduplication, and scheduled continuous mode
+- GitHub Copilot OTLP mapper for seat assignment and usage metrics telemetry
+- Copilot state manager for sync cursor persistence
+- Codex CLI backfill attribution support for accurate historical telemetry
+- Cross-SDK field parity registry (`_core/schema/field-registry.ts`) to standardize token types across providers
+- Context7 documentation refresh automation workflows
+
+### Fixed
+
+- Codex CLI critical issues blocking end-to-end telemetry (shared timestamp, `duration_ms` parity)
+- Test payload body/scope mismatch (hyphen vs underscore)
+- Copilot scheduler dedup sending full days and sync lock cleanup
+
+### Changed
+
+- Copilot CLI validates `--subscription-tier` flag and uses natural key dedup
+- OTLP client and retry handler extended with copilot-specific batch support
+
 ## [1.0.9] - 2026-05-08
 
 ### Removed
@@ -122,6 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.0
 [1.0.9]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.9
 [1.0.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.8
 [1.0.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.7

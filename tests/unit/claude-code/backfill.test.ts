@@ -100,10 +100,10 @@ describe("createOtlpPayload — log record attributes", () => {
     const payload = createOtlpPayload([record], {});
     const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
 
-    expect(logAttrs.find((a) => a.key === "input_tokens")?.value.intValue).toBe(200);
-    expect(logAttrs.find((a) => a.key === "output_tokens")?.value.intValue).toBe(75);
-    expect(logAttrs.find((a) => a.key === "cache_read_tokens")?.value.intValue).toBe(15);
-    expect(logAttrs.find((a) => a.key === "cache_creation_tokens")?.value.intValue).toBe(8);
+    expect(logAttrs.find((a) => a.key === "input_tokens")?.value.stringValue).toBe("200");
+    expect(logAttrs.find((a) => a.key === "output_tokens")?.value.stringValue).toBe("75");
+    expect(logAttrs.find((a) => a.key === "cache_read_tokens")?.value.stringValue).toBe("15");
+    expect(logAttrs.find((a) => a.key === "cache_creation_tokens")?.value.stringValue).toBe("8");
   });
 });
 

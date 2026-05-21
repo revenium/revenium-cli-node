@@ -1,37 +1,36 @@
 import chalk from "chalk";
 import ora from "ora";
-import { loadConfig, configExists } from "../config/loader.js";
+import { readCodexToml, extractOtelValues, getCodexConfigPath } from "../config/loader.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
-import { createTestPayload, generateTestSessionId } from "../../_core/api/health-check.js";
-import { LOG_BODY_VALUES, SCOPE_NAMES } from "../../_core/schema/field-registry.js";
+import { generateTestSessionId } from "../../_core/api/health-check.js";
+import { createCodexMapperTestPayload } from "../payloads/test-payload.js";
 
 interface TestOptions {
   verbose?: boolean;
+  configPath?: string;
 }
 
-export async function testCommand(options: TestOptions = {}): Promise<void> {
-  console.log(chalk.bold("\nRevenium Cursor IDE Metering Test\n"));
+export async function testAction(options: TestOptions = {}): Promise<void> {
+  console.log(chalk.bold("\nRevenium Codex CLI Metering Test\n"));
 
-  if (!configExists()) {
+  const toml = await readCodexToml(options.configPath);
+  if (!toml) {
     console.log(chalk.red("Configuration not found"));
-    console.log(chalk.yellow("Run `revenium-cursor setup` first to configure the integration."));
+    console.log(chalk.dim(`Expected at: ${getCodexConfigPath(options.configPath)}`));
+    console.log(chalk.yellow("Run `revenium-codex setup` first to configure the integration."));
     process.exit(1);
+    return;
   }
 
-  const config = await loadConfig();
-  if (!config) {
-    console.log(chalk.red("Could not load configuration"));
+  const otelValues = extractOtelValues(toml);
+  if (!otelValues) {
+    console.log(chalk.red("Could not parse [otel] block from Codex config"));
     process.exit(1);
+    return;
   }
 
   const sessionId = generateTestSessionId();
-  const payload = createTestPayload(sessionId, "cursor-ide", {
-    email: config.email,
-    organizationName: config.organizationName,
-    productName: config.productName,
-    bodyValue: LOG_BODY_VALUES["cursor"],
-    scopeName: SCOPE_NAMES["cursor"],
-  });
+  const payload = createCodexMapperTestPayload(sessionId);
 
   if (options.verbose) {
     console.log(chalk.dim("Test payload:"));
@@ -43,7 +42,7 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
 
   try {
     const startTime = Date.now();
-    const response = await sendOtlpLogs(config.reveniumEndpoint, config.reveniumApiKey, payload);
+    const response = await sendOtlpLogs(otelValues.endpoint, otelValues.apiKey, payload);
     const latencyMs = Date.now() - startTime;
 
     spinner.succeed(`Test metric sent successfully (${latencyMs}ms)`);
@@ -62,9 +61,6 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
         chalk.yellow("The backend returned processedEvents = 0. Check your mapper configuration."),
       );
     }
-    console.log(
-      chalk.dim("You can verify it in the Revenium dashboard at https://app.revenium.ai"),
-    );
   } catch (error) {
     spinner.fail("Failed to send test metric");
     console.error(
@@ -72,12 +68,13 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
     );
 
     console.log("\n" + chalk.yellow("Troubleshooting:"));
-    console.log("  1. Verify your Revenium API key is correct");
+    console.log("  1. Verify your API key is correct");
     console.log("  2. Check the endpoint URL");
     console.log("  3. Ensure you have network connectivity");
-    console.log("  4. Run `revenium-cursor status` for more details");
+    console.log("  4. Run `revenium-codex status` for more details");
 
     process.exit(1);
+    return;
   }
 
   console.log("");

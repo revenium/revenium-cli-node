@@ -6,6 +6,7 @@ export type {
   ShellUpdateResult,
   OTLPValue,
   OTLPLogsPayload,
+  OTLPTracesPayload,
   OTLPResponse,
   ToolContext,
   ToolMetadata,
@@ -14,7 +15,7 @@ export type {
 } from "./_core/types/index.js";
 
 export { validateApiKey, validateEmail, validateEndpointUrl } from "./_core/config/validator.js";
-export { sendOtlpLogs } from "./_core/api/otlp-client.js";
+export { sendOtlpLogs, sendOtlpTraces } from "./_core/api/otlp-client.js";
 export {
   checkEndpointHealth,
   createTestPayload,

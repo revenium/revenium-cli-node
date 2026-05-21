@@ -1,13 +1,15 @@
 {
   "name": "@revenium/cli",
-  "version": "1.0.9",
-  "description": "Unified Revenium CLI tools for Claude Code, Gemini CLI, and Cursor metering setup",
+  "version": "1.1.0",
+  "description": "Unified Revenium CLI tools for Claude Code, Gemini CLI, Cursor, GitHub Copilot, and Codex metering setup",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "revenium-metering": "./dist/claude-code/cli/index.js",
     "revenium-gemini": "./dist/gemini-cli/cli/index.js",
-    "revenium-cursor": "./dist/cursor/cli/index.js"
+    "revenium-cursor": "./dist/cursor/cli/index.js",
+    "revenium-codex": "./dist/codex-cli/cli/index.js",
+    "revenium-copilot": "./dist/copilot/cli/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -32,6 +34,8 @@
     "claude-code",
     "gemini",
     "cursor",
+    "copilot",
+    "github-copilot",
     "metering",
     "telemetry"
   ],
