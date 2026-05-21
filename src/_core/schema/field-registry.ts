@@ -148,13 +148,13 @@ export const SERVICE_NAMES: Record<Platform, string> = {
 export const SCOPE_NAMES: Record<Platform, string> = {
   "claude-code": "claude-code",
   cursor: "cursor_admin_api",
-  gemini: "gemini-cli",
+  gemini: "gemini_cli",
   copilot: "github_copilot.log_only",
 };
 
 export const LOG_BODY_VALUES: Record<Platform, string> = {
   "claude-code": "claude_code.api_request",
   cursor: "cursor_ide.api_response",
-  gemini: "gemini-cli.api_request",
+  gemini: "gemini_cli.api_response",
   copilot: "chat",
 };

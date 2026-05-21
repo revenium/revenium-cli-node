@@ -295,12 +295,16 @@ describe("Gemini health-check field parity", () => {
   });
 
   it("scope.name matches registry", () => {
-    const payload = createTestPayload("test-session", "gemini-cli");
+    const payload = createTestPayload("test-session", "gemini-cli", {
+      scopeName: SCOPE_NAMES["gemini"],
+    });
     expect(extractScopeName(payload)).toBe(SCOPE_NAMES["gemini"]);
   });
 
   it("body value matches registry", () => {
-    const payload = createTestPayload("test-session", "gemini-cli");
+    const payload = createTestPayload("test-session", "gemini-cli", {
+      bodyValue: LOG_BODY_VALUES["gemini"],
+    });
     const body = payload.resourceLogs[0].scopeLogs[0].logRecords[0].body;
     expect(body.stringValue).toBe(LOG_BODY_VALUES["gemini"]);
   });

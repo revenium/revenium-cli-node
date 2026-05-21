@@ -5,6 +5,7 @@ import { DEFAULT_REVENIUM_URL } from "../../_core/constants.js";
 import { maskApiKey, maskEmail } from "../../_core/utils/masking.js";
 import { validateApiKey, validateEmail } from "../../_core/config/validator.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
+import { LOG_BODY_VALUES, SCOPE_NAMES } from "../../_core/schema/field-registry.js";
 import { updateShellProfile, getManualInstructions } from "../../_core/shell/profile-updater.js";
 import { detectShell } from "../../_core/shell/detector.js";
 import { writeConfig, getConfigFilePath } from "../config/writer.js";
@@ -38,7 +39,10 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   const spinner = ora("Testing API key...").start();
 
   try {
-    const healthResult = await checkEndpointHealth(config.endpoint, config.apiKey, "gemini-cli");
+    const healthResult = await checkEndpointHealth(config.endpoint, config.apiKey, "gemini-cli", {
+      scopeName: SCOPE_NAMES["gemini"],
+      bodyValue: LOG_BODY_VALUES["gemini"],
+    });
 
     if (!healthResult.healthy) {
       spinner.fail(`API key validation failed: ${healthResult.message}`);

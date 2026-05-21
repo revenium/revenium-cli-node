@@ -2,6 +2,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { loadConfig, configExists, isEnvLoaded, getConfigPath } from "../config/loader.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
+import { LOG_BODY_VALUES, SCOPE_NAMES } from "../../_core/schema/field-registry.js";
 import { maskApiKey, maskEmail } from "../../_core/utils/masking.js";
 import { detectShell, getProfilePath } from "../../_core/shell/detector.js";
 
@@ -59,7 +60,10 @@ export async function statusCommand(): Promise<void> {
   const spinner = ora("  Testing connectivity...").start();
 
   try {
-    const healthResult = await checkEndpointHealth(config.endpoint, config.apiKey, "gemini-cli");
+    const healthResult = await checkEndpointHealth(config.endpoint, config.apiKey, "gemini-cli", {
+      scopeName: SCOPE_NAMES["gemini"],
+      bodyValue: LOG_BODY_VALUES["gemini"],
+    });
 
     if (healthResult.healthy) {
       spinner.succeed(`  Endpoint healthy (${healthResult.latencyMs}ms)`);

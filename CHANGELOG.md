@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-05-21
+
+### Fixed
+
+- Gemini CLI test payload scope and body mismatch with backend mapper (`gemini-cli` to `gemini_cli`, `api_request` to `api_response`)
+
 ## [1.1.0] - 2026-05-21
 
 ### Added
@@ -145,6 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.1]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.1
 [1.1.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.0
 [1.0.9]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.9
 [1.0.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.0.8

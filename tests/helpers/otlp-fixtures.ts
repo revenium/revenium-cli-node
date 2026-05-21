@@ -22,11 +22,19 @@ export const PROVIDER_SERVICE_NAMES = {
 
 export const PROVIDER_BODY_PATTERNS = {
   "claude-code": "claude-code.api_request",
-  "gemini-cli": "gemini-cli.api_request",
+  "gemini-cli": "gemini_cli.api_response",
   cursor: "cursor_ide.api_response",
 } as const;
 
 export type ProviderName = keyof typeof PROVIDER_SERVICE_NAMES;
+
+const PROVIDER_SCOPE_OVERRIDES: Partial<Record<ProviderName, string>> = {
+  "gemini-cli": "gemini_cli",
+};
+
+const PROVIDER_BODY_OVERRIDES: Partial<Record<ProviderName, string>> = {
+  "gemini-cli": "gemini_cli.api_response",
+};
 
 export function createProviderTestPayload(provider: ProviderName): OTLPLogsPayload {
   if (provider === "cursor") {
@@ -36,5 +44,8 @@ export function createProviderTestPayload(provider: ProviderName): OTLPLogsPaylo
   }
 
   const sessionId = generateTestSessionId();
-  return createTestPayload(sessionId, PROVIDER_SERVICE_NAMES[provider]);
+  return createTestPayload(sessionId, PROVIDER_SERVICE_NAMES[provider], {
+    scopeName: PROVIDER_SCOPE_OVERRIDES[provider],
+    bodyValue: PROVIDER_BODY_OVERRIDES[provider],
+  });
 }
