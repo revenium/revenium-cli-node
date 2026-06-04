@@ -12,6 +12,7 @@ import {
   getReveniumEnvPath,
 } from "../config/writer.js";
 import type { CodexOtelConfig } from "../config/writer.js";
+import type { ShellType } from "../../_core/types/index.js";
 
 interface SetupOptions {
   apiKey?: string;
@@ -22,6 +23,43 @@ interface SetupOptions {
   configPath?: string;
   skipShellUpdate?: boolean;
   force?: boolean;
+}
+
+function getSourceCommand(shellType: ShellType, filePath: string): string {
+  const escaped = escapeShellValue(filePath);
+  const unsetVars = [
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_PROTOCOL",
+    "OTEL_LOGS_EXPORTER",
+  ];
+  const unsetArgs = unsetVars.map((name) => `-u ${name}`).join(" \\\n        ");
+
+  if (shellType === "fish") {
+    return [
+      `if test -f ${escaped}`,
+      `    source ${escaped}`,
+      "end",
+      "",
+      "function codex",
+      `    env \\`,
+      `        ${unsetArgs} \\`,
+      `        codex $argv`,
+      "end",
+    ].join("\n");
+  }
+
+  return [
+    `if [ -f ${escaped} ]; then`,
+    `    source ${escaped}`,
+    "fi",
+    "",
+    "codex() {",
+    "    env \\",
+    `        ${unsetArgs} \\`,
+    `        codex "$@"`,
+    "}",
+  ].join("\n");
 }
 
 export async function setupAction(options: SetupOptions = {}): Promise<void> {
@@ -70,10 +108,7 @@ export async function setupAction(options: SetupOptions = {}): Promise<void> {
     try {
       const result = await updateShellProfile({
         markerName: "revenium-codex-metering",
-        getSourceCommand: (_shellType, filePath) => {
-          const escaped = escapeShellValue(filePath);
-          return `if [ -f ${escaped} ]; then\n    source ${escaped}\nfi`;
-        },
+        getSourceCommand,
         getConfigFilePath: () => getReveniumEnvPath(options.configPath),
       });
 

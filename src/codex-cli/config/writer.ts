@@ -10,6 +10,7 @@ import {
   REVENIUM_API_KEY_ATTR,
 } from "../../_core/constants.js";
 import { escapeShellValue, escapeResourceAttributeValue } from "../../_core/shell/escaping.js";
+import { extractBaseEndpoint, getFullOtlpEndpoint } from "../../_core/config/loader.js";
 import { getCodexConfigPath } from "./loader.js";
 
 export interface CodexOtelConfig {
@@ -21,23 +22,21 @@ export interface CodexOtelConfig {
 }
 
 function escapeTomlString(v: string): string {
-  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 }
 
 export function generateTomlBlock(config: CodexOtelConfig): string {
-  const baseEndpoint = (config.endpoint ?? DEFAULT_REVENIUM_URL).replace(/\/+$/, "");
-  const logsEndpoint = baseEndpoint.endsWith("/v1/logs") ? baseEndpoint : `${baseEndpoint}/v1/logs`;
+  const rawEndpoint = (config.endpoint ?? DEFAULT_REVENIUM_URL).replace(/\/+$/, "");
+  const baseEndpoint = extractBaseEndpoint(rawEndpoint);
+  // Always rebuild from the bare origin so any stored variant — `/v1/logs`,
+  // `/meter/v2/otlp`, `/meter/v2/otlp/v1/logs`, or no path — normalises to the
+  // canonical OTLP logs path.
+  const logsEndpoint = `${getFullOtlpEndpoint(baseEndpoint)}/v1/logs`;
 
   const lines: string[] = [
     "[otel]",
+    `exporter = { otlp-http = { endpoint = "${escapeTomlString(logsEndpoint)}", protocol = "json", headers = { "x-api-key" = "${escapeTomlString(config.apiKey)}" } } }`,
     `metrics_exporter = "none"`,
-    "",
-    "[otel.exporter.otlp-http]",
-    `endpoint = "${escapeTomlString(logsEndpoint)}"`,
-    `protocol = "binary"`,
-    "",
-    "[otel.exporter.otlp-http.headers]",
-    `"x-api-key" = "${escapeTomlString(config.apiKey)}"`,
     "",
     "[features]",
     "runtime_metrics = true",

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { CODEX_CONFIG_DIR, CODEX_CONFIG_FILE } from "../constants.js";
+import { extractBaseEndpoint } from "../../_core/config/loader.js";
 
 export function getCodexConfigPath(override?: string): string {
   if (override) return override;
@@ -45,12 +46,21 @@ export function hasFeaturesRuntimeMetrics(tomlText: string): boolean {
 }
 
 export function extractOtelValues(tomlText: string): { endpoint: string; apiKey: string } | null {
-  const legacyBlock = extractSection(tomlText, "otel");
-  const legacyEndpoint = legacyBlock
-    ? /^\s*endpoint\s*=\s*"([^"]+)"/m.exec(legacyBlock)?.[1]
-    : null;
-  const legacyApiKey = legacyBlock ? /^\s*api_key\s*=\s*"([^"]+)"/m.exec(legacyBlock)?.[1] : null;
+  const otelBlock = extractSection(tomlText, "otel");
+  const legacyEndpoint = otelBlock ? /^\s*endpoint\s*=\s*"([^"]+)"/m.exec(otelBlock)?.[1] : null;
+  const legacyApiKey = otelBlock ? /^\s*api_key\s*=\s*"([^"]+)"/m.exec(otelBlock)?.[1] : null;
   if (legacyEndpoint && legacyApiKey) return { endpoint: legacyEndpoint, apiKey: legacyApiKey };
+
+  const inlineExporterLine = otelBlock
+    ? /^\s*exporter\s*=.*otlp-http.*$/m.exec(otelBlock)?.[0]
+    : null;
+  if (inlineExporterLine) {
+    const rawEndpoint = /endpoint\s*=\s*"([^"]+)"/.exec(inlineExporterLine)?.[1];
+    const apiKey = /"?x-api-key"?\s*=\s*"([^"]+)"/.exec(inlineExporterLine)?.[1];
+    if (rawEndpoint && apiKey) {
+      return { endpoint: extractBaseEndpoint(rawEndpoint), apiKey };
+    }
+  }
 
   const exporterBlock = extractSection(tomlText, "otel.exporter.otlp-http");
   const headersBlock = extractSection(tomlText, "otel.exporter.otlp-http.headers");

@@ -66,12 +66,12 @@ export function generateEnvContent(config: ClaudeCodeConfig): string {
       resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
     }
 
-    const organizationValue = config.organizationName || config.organizationId;
+    const organizationValue = config.organizationName;
     if (organizationValue) {
       resourceAttrs.push(`organization.name=${escapeResourceAttributeValue(organizationValue)}`);
     }
 
-    const productValue = config.productName || config.productId;
+    const productValue = config.productName;
     if (productValue) {
       resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
     }
@@ -133,12 +133,12 @@ export function generateFishContent(config: ClaudeCodeConfig): string {
       resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
     }
 
-    const organizationValue = config.organizationName || config.organizationId;
+    const organizationValue = config.organizationName;
     if (organizationValue) {
       resourceAttrs.push(`organization.name=${escapeResourceAttributeValue(organizationValue)}`);
     }
 
-    const productValue = config.productName || config.productId;
+    const productValue = config.productName;
     if (productValue) {
       resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
     }

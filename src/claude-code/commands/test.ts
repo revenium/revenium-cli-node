@@ -27,8 +27,8 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
   const sessionId = generateTestSessionId();
   const payload = createTestPayload(sessionId, "claude-code", {
     email: config.email,
-    organizationName: config.organizationName || config.organizationId,
-    productName: config.productName || config.productId,
+    organizationName: config.organizationName,
+    productName: config.productName,
     bodyValue: LOG_BODY_VALUES["claude-code"],
     scopeName: SCOPE_NAMES["claude-code"],
   });

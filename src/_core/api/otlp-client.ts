@@ -1,9 +1,6 @@
 import type { OTLPLogsPayload, OTLPTracesPayload, OTLPResponse } from "../types/index.js";
 import { getFullOtlpEndpoint } from "../config/loader.js";
-
-const REQUEST_TIMEOUT_MS = 30_000;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1_000;
+import { jitteredBackoff, getMaxRetries, getRequestTimeoutMs } from "./resilience.js";
 
 function isRetryableError(error: Error): boolean {
   return (
@@ -45,9 +42,12 @@ export async function sendOtlpLogs(
 
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  const maxRetries = getMaxRetries();
+  const timeoutMs = getRequestTimeoutMs();
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -65,11 +65,11 @@ export async function sendOtlpLogs(
         clearTimeout(timeoutId);
         const sanitizedError = sanitizeErrorMessage(errorText, apiKey);
 
-        if (isRetryableStatusCode(response.status) && attempt < MAX_RETRIES - 1) {
+        if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
           lastError = new Error(
             `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`,
           );
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          await sleep(jitteredBackoff(attempt));
           continue;
         }
 
@@ -86,13 +86,13 @@ export async function sendOtlpLogs(
 
       if (error instanceof Error) {
         if (error.name === "AbortError") {
-          lastError = new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms`);
+          lastError = new Error(`Request timeout after ${timeoutMs}ms`);
         } else {
           lastError = new Error(sanitizeErrorMessage(error.message, apiKey));
         }
 
-        if (isRetryableError(lastError) && attempt < MAX_RETRIES - 1) {
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+        if (isRetryableError(lastError) && attempt < maxRetries - 1) {
+          await sleep(jitteredBackoff(attempt));
           continue;
         }
 
@@ -115,9 +115,12 @@ export async function sendOtlpTraces(
 
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  const maxRetries = getMaxRetries();
+  const timeoutMs = getRequestTimeoutMs();
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -135,11 +138,11 @@ export async function sendOtlpTraces(
         clearTimeout(timeoutId);
         const sanitizedError = sanitizeErrorMessage(errorText, apiKey);
 
-        if (isRetryableStatusCode(response.status) && attempt < MAX_RETRIES - 1) {
+        if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
           lastError = new Error(
             `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`,
           );
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          await sleep(jitteredBackoff(attempt));
           continue;
         }
 
@@ -156,13 +159,13 @@ export async function sendOtlpTraces(
 
       if (error instanceof Error) {
         if (error.name === "AbortError") {
-          lastError = new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms`);
+          lastError = new Error(`Request timeout after ${timeoutMs}ms`);
         } else {
           lastError = new Error(sanitizeErrorMessage(error.message, apiKey));
         }
 
-        if (isRetryableError(lastError) && attempt < MAX_RETRIES - 1) {
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+        if (isRetryableError(lastError) && attempt < maxRetries - 1) {
+          await sleep(jitteredBackoff(attempt));
           continue;
         }
 

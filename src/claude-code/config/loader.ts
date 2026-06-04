@@ -19,9 +19,7 @@ export interface ClaudeCodeConfig {
   subscriptionTier?: SubscriptionTier;
   extraUsageEnabled?: boolean;
   organizationName?: string;
-  organizationId?: string;
   productName?: string;
-  productId?: string;
 }
 
 export function getConfigPath(): string {
@@ -67,6 +65,8 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
     const resourceAttrsStr = env["OTEL_RESOURCE_ATTRIBUTES"] || "";
     const resourceAttrs = parseOtelResourceAttributes(resourceAttrsStr);
 
+    // BACK-1456: env-var names ENV_VARS.ORGANIZATION_ID / PRODUCT_ID preserved
+    // (user-facing config); only the typed field names and wire-emit migrate to *Name.
     const organizationName =
       resourceAttrs["organization.name"] ||
       resourceAttrs["organization.id"] ||
@@ -82,9 +82,7 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       subscriptionTier,
       extraUsageEnabled,
       organizationName,
-      organizationId: organizationName,
       productName,
-      productId: productName,
     };
   } catch {
     return null;
