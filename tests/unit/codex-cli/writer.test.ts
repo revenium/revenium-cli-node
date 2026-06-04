@@ -16,14 +16,9 @@ const fullConfig: CodexOtelConfig = {
 };
 
 describe("generateTomlBlock — struct-variant [otel] block", () => {
-  it("emits [otel.exporter.otlp-http] table header", () => {
+  it("emits inline otlp-http exporter config", () => {
     const output = generateTomlBlock(minimalConfig);
-    expect(output).toContain("[otel.exporter.otlp-http]");
-  });
-
-  it("emits [otel.exporter.otlp-http.headers] table header", () => {
-    const output = generateTomlBlock(minimalConfig);
-    expect(output).toContain("[otel.exporter.otlp-http.headers]");
+    expect(output).toContain("exporter = { otlp-http = {");
   });
 
   it("does not use flat dotted-key notation for otel fields", () => {
@@ -33,38 +28,53 @@ describe("generateTomlBlock — struct-variant [otel] block", () => {
 
   it("includes the x-api-key in the headers sub-table", () => {
     const output = generateTomlBlock(minimalConfig);
-    expect(output).toContain('"x-api-key" = "hak_testkey123"');
+    expect(output).toContain('headers = { "x-api-key" = "hak_testkey123" }');
   });
 
   it("appends /v1/logs to the endpoint", () => {
     const output = generateTomlBlock(minimalConfig);
-    expect(output).toContain("https://api.revenium.ai/v1/logs");
+    expect(output).toContain("https://api.revenium.ai/meter/v2/otlp/v1/logs");
   });
 
   it("does not double-append /v1/logs when already present", () => {
     const config: CodexOtelConfig = {
       apiKey: "hak_test",
-      endpoint: "https://api.revenium.ai/v1/logs",
+      endpoint: "https://api.revenium.ai/meter/v2/otlp/v1/logs",
     };
     const output = generateTomlBlock(config);
     expect(output).not.toContain("/v1/logs/v1/logs");
   });
 
+  it("does not double-append /meter/v2/otlp when already present without /v1/logs", () => {
+    const config: CodexOtelConfig = {
+      apiKey: "hak_test",
+      endpoint: "https://api.revenium.ai/meter/v2/otlp",
+    };
+    const output = generateTomlBlock(config);
+    expect(output).toContain("https://api.revenium.ai/meter/v2/otlp/v1/logs");
+    expect(output).not.toContain("/meter/v2/otlp/meter/v2/otlp");
+  });
+
   it("strips trailing slash from endpoint", () => {
     const config: CodexOtelConfig = { ...minimalConfig, endpoint: "https://api.revenium.ai/" };
     const output = generateTomlBlock(config);
-    expect(output).toContain("https://api.revenium.ai/v1/logs");
+    expect(output).toContain("https://api.revenium.ai/meter/v2/otlp/v1/logs");
     expect(output).not.toContain("revenium.ai//");
   });
 
-  it("sets protocol to binary", () => {
+  it("sets protocol to json", () => {
     const output = generateTomlBlock(minimalConfig);
-    expect(output).toContain('protocol = "binary"');
+    expect(output).toContain('protocol = "json"');
   });
 
   it("sets metrics_exporter to none", () => {
     const output = generateTomlBlock(minimalConfig);
     expect(output).toContain('metrics_exporter = "none"');
+  });
+
+  it("selects the otlp-http exporter", () => {
+    const output = generateTomlBlock(minimalConfig);
+    expect(output).toContain("otlp-http");
   });
 });
 
@@ -109,6 +119,15 @@ describe("generateTomlBlock — optional fields", () => {
     const output = generateTomlBlock(config);
     expect(output).toContain("revenium.ai");
   });
+
+  it("escapes newlines in inline TOML strings", () => {
+    const output = generateTomlBlock({
+      apiKey: "hak_test\nmalicious",
+      endpoint: "https://api.revenium.ai",
+    });
+    expect(output).toContain("\\n");
+    expect(output).not.toContain("hak_test\nmalicious");
+  });
 });
 
 describe("mergeTomlBlocks — idempotency on re-run", () => {
@@ -117,12 +136,11 @@ describe("mergeTomlBlocks — idempotency on re-run", () => {
     const firstRun = mergeTomlBlocks("", block);
     const secondRun = mergeTomlBlocks(firstRun, block);
 
-    const exporterCount = (secondRun.match(/^\[otel\.exporter\.otlp-http\]$/gm) ?? []).length;
+    const exporterCount = (secondRun.match(/^\s*exporter\s*=\s*\{.*otlp-http.*$/gm) ?? []).length;
     expect(exporterCount).toBe(1);
 
-    const headersCount = (secondRun.match(/^\[otel\.exporter\.otlp-http\.headers\]$/gm) ?? [])
-      .length;
-    expect(headersCount).toBe(1);
+    expect(secondRun).not.toContain("[otel.exporter.otlp-http]");
+    expect(secondRun).not.toContain("[otel.exporter.otlp-http.headers]");
   });
 });
 
@@ -133,7 +151,7 @@ describe("mergeTomlBlocks — legacy flat-key removal", () => {
     const result = mergeTomlBlocks(legacy, block);
     expect(result).not.toContain("otel.endpoint");
     expect(result).not.toContain("otel.api_key");
-    expect(result).toContain("[otel.exporter.otlp-http]");
+    expect(result).toContain("exporter = { otlp-http = {");
   });
 });
 

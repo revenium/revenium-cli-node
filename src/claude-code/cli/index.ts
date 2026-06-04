@@ -31,8 +31,8 @@ program
       email: options.email,
       tier: options.tier,
       endpoint: options.endpoint,
-      organizationId: options.organization,
-      productId: options.product,
+      organizationName: options.organization,
+      productName: options.product,
       skipShellUpdate: options.skipShellUpdate,
       extraUsageEnabled: options.extraUsageEnabled || undefined,
     });

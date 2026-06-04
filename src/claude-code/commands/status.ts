@@ -35,11 +35,11 @@ export async function statusCommand(): Promise<void> {
   if (config.subscriptionTier) {
     console.log(`  Tier:       ${config.subscriptionTier}`);
   }
-  const organizationValue = config.organizationName || config.organizationId;
+  const organizationValue = config.organizationName;
   if (organizationValue) {
     console.log(`  Organization: ${organizationValue}`);
   }
-  const productValue = config.productName || config.productId;
+  const productValue = config.productName;
   if (productValue) {
     console.log(`  Product:    ${productValue}`);
   }
@@ -67,8 +67,8 @@ export async function statusCommand(): Promise<void> {
 
   try {
     const healthResult = await checkEndpointHealth(config.endpoint, config.apiKey, "claude-code", {
-      organizationName: config.organizationName || config.organizationId,
-      productName: config.productName || config.productId,
+      organizationName: config.organizationName,
+      productName: config.productName,
     });
 
     if (healthResult.healthy) {

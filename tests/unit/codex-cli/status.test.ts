@@ -28,14 +28,8 @@ import * as otlpClient from "../../../src/_core/api/otlp-client.js";
 
 const STRUCT_VARIANT_TOML = [
   "[otel]",
+  'exporter = { otlp-http = { endpoint = "https://api.revenium.ai/meter/v2/otlp/v1/logs", protocol = "json", headers = { "x-api-key" = "hak_test" } } }',
   'metrics_exporter = "none"',
-  "",
-  "[otel.exporter.otlp-http]",
-  'endpoint = "https://api.revenium.ai/v1/logs"',
-  'protocol = "binary"',
-  "",
-  "[otel.exporter.otlp-http.headers]",
-  '"x-api-key" = "hak_test"',
   "",
   "[features]",
   "runtime_metrics = true",

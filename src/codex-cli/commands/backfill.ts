@@ -9,6 +9,7 @@ import ora from "ora";
 import { extractOtelValues, readCodexToml } from "../config/loader.js";
 import { CODEX_CONFIG_DIR } from "../constants.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
+import { startupStagger } from "../../_core/api/resilience.js";
 import { parseEnvContent, parseOtelResourceAttributes } from "../../_core/config/loader.js";
 import { REVENIUM_API_KEY_ATTR, REVENIUM_ENV_FILE } from "../../_core/constants.js";
 import type { OTLPLogsPayload } from "../../_core/types/index.js";
@@ -468,6 +469,7 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
   const resourceAttributes = await loadBackfillResourceAttributes(options.configPath);
 
   const spinner = ora("Sending backfill payloads...").start();
+  await startupStagger();
   const totalBatches = Math.ceil(events.length / batchSize);
   let sent = 0;
   try {

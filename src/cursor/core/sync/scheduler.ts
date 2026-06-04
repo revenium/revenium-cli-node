@@ -1,5 +1,6 @@
 import { fetchEvents } from "../cursor-client.js";
 import { sendOtlpLogs } from "../../../_core/api/otlp-client.js";
+import { startupStagger } from "../../../_core/api/resilience.js";
 import { buildOtlpPayload, isValidTimestamp } from "../transform/otlp-mapper.js";
 import { loadState, saveState } from "./state-manager.js";
 import { Deduplicator, computeEventHash } from "./deduplicator.js";
@@ -121,6 +122,7 @@ export class SyncWatcher {
     onError?: (error: Error) => void,
   ): Promise<void> {
     this.running = true;
+    await startupStagger();
 
     while (this.running) {
       try {

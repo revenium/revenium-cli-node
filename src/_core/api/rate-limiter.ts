@@ -1,3 +1,5 @@
+import { getTargetTps } from "./resilience.js";
+
 export const DEFAULT_TARGET_TPS = 5;
 export const MAX_BATCH_SIZE = 100;
 export const DEFAULT_BATCH_SIZE = 10;
@@ -20,7 +22,7 @@ export async function enforceRateLimit(
   state: RateLimiterState,
   options: RateLimitOptions,
 ): Promise<void> {
-  const { batchSize, targetTps = DEFAULT_TARGET_TPS, userDelayMs: rawUserDelay = 0 } = options;
+  const { batchSize, targetTps = getTargetTps(), userDelayMs: rawUserDelay = 0 } = options;
 
   if (!Number.isFinite(batchSize) || batchSize <= 0) return;
   if (!Number.isFinite(targetTps) || targetTps <= 0) return;

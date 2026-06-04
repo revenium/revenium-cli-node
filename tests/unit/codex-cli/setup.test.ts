@@ -11,7 +11,7 @@ vi.mock("../../../src/codex-cli/config/writer.js", () => ({
   generateTomlBlock: vi
     .fn()
     .mockReturnValue(
-      '[otel]\nmetrics_exporter = "none"\n\n[otel.exporter.otlp-http]\nendpoint = "https://api.revenium.ai/v1/logs"\nprotocol = "binary"\n\n[otel.exporter.otlp-http.headers]\n"x-api-key" = "hak_test"\n\n[features]\nruntime_metrics = true\n',
+      '[otel]\nexporter = { otlp-http = { endpoint = "https://api.revenium.ai/meter/v2/otlp/v1/logs", protocol = "json", headers = { "x-api-key" = "hak_test" } } }\nmetrics_exporter = "none"\n\n[features]\nruntime_metrics = true\n',
     ),
   writeCodexToml: vi.fn().mockResolvedValue("/tmp/.codex/config.toml"),
   writeReveniumEnv: vi.fn().mockResolvedValue("/tmp/.codex/revenium.env"),
@@ -68,6 +68,26 @@ describe("setupAction — --skip-shell-update", () => {
     });
 
     expect(profileUpdater.updateShellProfile).toHaveBeenCalled();
+  });
+
+  it("installs a codex wrapper that clears generic OTEL exporter variables", async () => {
+    await setupAction({
+      apiKey: "hak_test_key123",
+      endpoint: "https://api.revenium.ai",
+    });
+
+    const updateConfig = vi.mocked(profileUpdater.updateShellProfile).mock.calls[0]?.[0];
+    const sourceCommand = updateConfig.getSourceCommand("zsh", "/tmp/.codex/revenium.env");
+
+    expect(sourceCommand).toContain("source '/tmp/.codex/revenium.env'");
+    expect(sourceCommand).toContain("codex() {");
+    expect(sourceCommand).toContain("-u OTEL_EXPORTER_OTLP_ENDPOINT");
+    expect(sourceCommand).toContain("-u OTEL_EXPORTER_OTLP_HEADERS");
+    expect(sourceCommand).toContain("-u OTEL_EXPORTER_OTLP_PROTOCOL");
+    expect(sourceCommand).toContain("-u OTEL_LOGS_EXPORTER");
+    expect(sourceCommand).not.toContain("-u REVENIUM_PRODUCT_NAME");
+    expect(sourceCommand).toContain('codex "$@"');
+    expect(sourceCommand).not.toContain('command codex "$@"');
   });
 });
 

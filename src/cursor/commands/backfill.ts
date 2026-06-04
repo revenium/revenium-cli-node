@@ -11,6 +11,7 @@ import {
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
 import { sendBatchWithRetry, MAX_RETRIES } from "../../_core/api/retry-handler.js";
+import { startupStagger } from "../../_core/api/resilience.js";
 import type { CursorUsageEvent } from "../types.js";
 
 export interface BackfillOptions {
@@ -227,6 +228,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
 
   const totalBatches = Math.ceil(sendableEvents.length / batchSize);
   const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
+  await startupStagger();
   let sentBatches = 0;
   let sentRecords = 0;
   let permanentlyFailedBatches = 0;

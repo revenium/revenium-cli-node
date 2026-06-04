@@ -1,9 +1,9 @@
 import chalk from "chalk";
 import { sendOtlpLogs, sendOtlpTraces } from "./otlp-client.js";
+import { jitteredBackoff, getBackoffBaseMs, getMaxRetries } from "./resilience.js";
 import type { OTLPLogsPayload, OTLPTracesPayload } from "../types/index.js";
 
-export const MAX_RETRIES = 3;
-const BACKOFF_BASE_MS = 1000;
+export const MAX_RETRIES = getMaxRetries();
 
 export interface RetryResult {
   success: boolean;
@@ -49,9 +49,9 @@ export async function sendBatchWithRetry(
       }
 
       if (attempt < maxRetries - 1) {
-        const backoffDelay = BACKOFF_BASE_MS * Math.pow(2, attempt);
+        const backoffDelay = jitteredBackoff(attempt, getBackoffBaseMs());
         if (verbose) {
-          console.log(chalk.yellow(`  Retrying in ${backoffDelay}ms...`));
+          console.log(chalk.yellow(`  Retrying in ${Math.round(backoffDelay)}ms...`));
         }
         await new Promise<void>((resolve) => setTimeout(resolve, backoffDelay));
       } else {
@@ -91,9 +91,9 @@ export async function sendTraceBatchWithRetry(
       }
 
       if (attempt < maxRetries - 1) {
-        const backoffDelay = BACKOFF_BASE_MS * Math.pow(2, attempt);
+        const backoffDelay = jitteredBackoff(attempt, getBackoffBaseMs());
         if (verbose) {
-          console.log(chalk.yellow(`  Retrying in ${backoffDelay}ms...`));
+          console.log(chalk.yellow(`  Retrying in ${Math.round(backoffDelay)}ms...`));
         }
         await new Promise<void>((resolve) => setTimeout(resolve, backoffDelay));
       } else {

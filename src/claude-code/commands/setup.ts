@@ -20,8 +20,8 @@ interface SetupOptions {
   email?: string;
   tier?: string;
   endpoint?: string;
-  organizationId?: string;
-  productId?: string;
+  organizationName?: string;
+  productName?: string;
   skipShellUpdate?: boolean;
   extraUsageEnabled?: boolean;
 }
@@ -175,8 +175,8 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
     email: options.email || answers.email || undefined,
     subscriptionTier: (options.tier || answers.tier) as SubscriptionTier,
     endpoint,
-    organizationId: options.organizationId,
-    productId: options.productId,
+    organizationName: options.organizationName,
+    productName: options.productName,
     extraUsageEnabled: options.extraUsageEnabled,
   };
 }

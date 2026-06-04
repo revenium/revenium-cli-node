@@ -14,6 +14,7 @@ import {
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
 import { sendBatchWithRetry, MAX_RETRIES } from "../../_core/api/retry-handler.js";
+import { startupStagger } from "../../_core/api/resilience.js";
 import type { OTLPLogsPayload } from "../../_core/types/index.js";
 
 export interface BackfillOptions {
@@ -414,6 +415,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
 
   const totalBatches = Math.ceil(allRecords.length / batchSize);
   const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
+  await startupStagger();
   let sentBatches = 0;
   let sentRecords = 0;
   let permanentlyFailedBatches = 0;
@@ -425,8 +427,8 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     const batch = allRecords.slice(i, i + batchSize);
     const payload = createOtlpPayload(batch, {
       email: config.email,
-      organizationName: config.organizationName || config.organizationId,
-      productName: config.productName || config.productId,
+      organizationName: config.organizationName,
+      productName: config.productName,
     });
 
     await enforceRateLimit(rateLimiterState, { batchSize: batch.length, userDelayMs: delay });
