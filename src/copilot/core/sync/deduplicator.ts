@@ -9,6 +9,8 @@ export function computeBreakdownHash(
     d: day.day,
     l: breakdown.language,
     e: breakdown.editor,
+    m: breakdown.model,
+    u: breakdown.user_login,
   });
 
   return createHash("sha256").update(raw).digest("hex");

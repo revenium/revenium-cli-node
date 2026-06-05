@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2026-06-05
+
+### Added
+
+- GitHub AI Credits billing API integration for real cost data (cost_usd per model per day)
+- Per-user usage tracking from GitHub Copilot Metrics API (users-1-day reports)
+
+### Changed
+
+- Migrate Copilot CLI from deprecated /copilot/usage endpoint to /copilot/metrics/reports/users-1-day (API version 2026-03-10)
+- Two-step fetch: signed download URLs then NDJSON report download with retry
+- Send real model name (e.g. gpt-5.3-codex) in gen_ai.request.model instead of hardcoded "copilot"
+- Deduplication key expanded to (day + user + language + model + editor)
+
+### Fixed
+
+- Transaction ID collision across users with same language/model
+- NDJSON parser resilience (malformed lines skipped instead of failing batch)
+- UTC date handling for billing API day parameter
+
 ## [1.1.2] - 2026-06-04
 
 ### Added
@@ -162,6 +182,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.4]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.4
 [1.1.2]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.2
 [1.1.1]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.1
 [1.1.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.0

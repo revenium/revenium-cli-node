@@ -40,11 +40,16 @@ function mapBreakdownToSpan(
   config: CopilotConfig,
 ): OTLPTracesPayload["resourceSpans"][0]["scopeSpans"][0]["spans"][0] {
   const startNano = dayToUnixNano(day.day);
-  const conversationId = `copilot-usage-${day.day}-${breakdown.language}-${breakdown.editor}`;
-  const transactionId = generateTransactionId(conversationId, startNano, "copilot", 0, 0);
+  const model = breakdown.model || "copilot";
+  const userPart = breakdown.user_login || "unknown";
+  const conversationId = `copilot-usage-${day.day}-${userPart}-${breakdown.language}-${model}-${breakdown.editor}`;
+  const transactionId = generateTransactionId(conversationId, startNano, model, 0, 0);
 
-  const attributes: Array<{ key: string; value: { stringValue?: string; intValue?: number } }> = [
-    { key: "gen_ai.request.model", value: { stringValue: "copilot" } },
+  const attributes: Array<{
+    key: string;
+    value: { stringValue?: string; intValue?: number; doubleValue?: number };
+  }> = [
+    { key: "gen_ai.request.model", value: { stringValue: model } },
     { key: "gen_ai.system", value: { stringValue: "github" } },
     { key: "gen_ai.usage.input_tokens", value: { intValue: 0 } },
     { key: "gen_ai.usage.output_tokens", value: { intValue: 0 } },
@@ -60,6 +65,10 @@ function mapBreakdownToSpan(
     { key: "copilot.usage.language", value: { stringValue: breakdown.language } },
     { key: "copilot.usage.editor", value: { stringValue: breakdown.editor } },
   ];
+
+  if (breakdown.cost_usd > 0) {
+    attributes.push({ key: "cost_usd", value: { doubleValue: breakdown.cost_usd } });
+  }
 
   if (config.email) {
     attributes.push({ key: "user.email", value: { stringValue: config.email } });

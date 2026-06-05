@@ -45,7 +45,7 @@ describe("buildOtlpPayload", () => {
     const getStr = (key: string) => attrs.find((a) => a.key === key)?.value.stringValue;
     const getInt = (key: string) => attrs.find((a) => a.key === key)?.value.intValue;
 
-    expect(getStr("gen_ai.request.model")).toBe("copilot");
+    expect(getStr("gen_ai.request.model")).toBe("gpt-4o");
     expect(getStr("gen_ai.system")).toBe("github");
     expect(getInt("gen_ai.usage.input_tokens")).toBe(0);
     expect(getInt("gen_ai.usage.output_tokens")).toBe(0);

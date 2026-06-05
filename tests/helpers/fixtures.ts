@@ -60,6 +60,9 @@ export function createCopilotBreakdown(
   return {
     language: "typescript",
     editor: "vscode",
+    model: "gpt-4o",
+    user_login: "testuser",
+    cost_usd: 0,
     suggestions_count: 150,
     acceptances_count: 90,
     lines_suggested: 300,
