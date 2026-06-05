@@ -12,7 +12,9 @@ export const DIR_MODE = 0o700;
 
 export const DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
-export const MAX_DAYS_PER_REQUEST = 28;
+export const DEFAULT_LOOKBACK_DAYS = 28;
+
+export const GITHUB_API_VERSION = "2026-03-10";
 
 export const MAX_EVENTS_PER_BATCH = 100;
 

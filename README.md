@@ -73,7 +73,7 @@ A professional-grade set of CLI tools that configure automatic AI usage tracking
 |   |-- commands/            setup, status, test, sync, reset, backfill
 |   |-- config/              ~/.github-copilot/revenium/ loader/writer
 |   |-- core/
-|   |   |-- github-client    GitHub Copilot API client (28-day window)
+|   |   |-- github-client    GitHub Copilot Metrics API + Billing API client
 |   |   +-- sync/
 |   |       |-- scheduler    Sync cycle orchestration and watch mode
 |   |       |-- state-manager Persistent sync state (JSON)
@@ -161,13 +161,14 @@ Load sync state from ~/.github-copilot/revenium/state.json
 Acquire process lock (prevent concurrent syncs)
        |
        v
-Fetch usage data from GitHub Copilot API
-  - Organization-level usage metrics
-  - 28-day rolling window per request
+Fetch usage data from GitHub Copilot Metrics API
+  - Per-user daily metrics via /copilot/metrics/reports/users-1-day
+  - Two-step: download URLs then NDJSON reports
+  - Enrich with billing cost from /settings/billing/ai_credit/usage
   - Retry with exponential backoff
        |
        v
-Deduplicate via natural key (day + language + editor)
+Deduplicate via natural key (day + user + language + model + editor)
        |
        v
 Transform to OTLP log records (suggestions, acceptances, active users)
@@ -184,13 +185,13 @@ Wait sync interval (default 5 min) -> repeat
 
 ## CLI Tools
 
-| Binary | Tool | Commands |
-|--------|------|----------|
-| `revenium-metering` | Claude Code | `setup` `status` `test` `backfill` |
-| `revenium-gemini` | Gemini CLI | `setup` `status` `test` |
-| `revenium-cursor` | Cursor IDE | `setup` `status` `test` `sync` `reset` `backfill` |
-| `revenium-copilot` | GitHub Copilot | `setup` `status` `test` `sync` `reset` `backfill` |
-| `revenium-codex` | OpenAI Codex | `setup` `status` `test` `backfill` |
+| Binary              | Tool           | Commands                                          |
+| ------------------- | -------------- | ------------------------------------------------- |
+| `revenium-metering` | Claude Code    | `setup` `status` `test` `backfill`                |
+| `revenium-gemini`   | Gemini CLI     | `setup` `status` `test`                           |
+| `revenium-cursor`   | Cursor IDE     | `setup` `status` `test` `sync` `reset` `backfill` |
+| `revenium-copilot`  | GitHub Copilot | `setup` `status` `test` `sync` `reset` `backfill` |
+| `revenium-codex`    | OpenAI Codex   | `setup` `status` `test` `backfill`                |
 
 ## Installation
 
@@ -218,6 +219,7 @@ revenium-metering setup
 ```
 
 The setup wizard will prompt for your API key, email, subscription tier, and endpoint. It automatically:
+
 1. Validates your API key format (`hak_` or `rev_` prefix)
 2. Tests connectivity to the Revenium endpoint
 3. Writes configuration to `~/.claude/revenium.env`
@@ -264,7 +266,7 @@ revenium-cursor test                # Send test metric
 revenium-copilot setup
 ```
 
-Requires a GitHub personal access token with `manage_billing:copilot` or `read:org` scope and a Revenium API key. Syncs organization-level Copilot usage metrics.
+Requires a GitHub PAT (classic) with `manage_billing:copilot`, `read:org`, and `admin:org` scopes. The org must have the "Copilot usage metrics" policy enabled (GitHub Org > Settings > Copilot > Policies). Syncs per-user Copilot usage metrics and billing cost data.
 
 ```bash
 revenium-copilot status              # Check config, sync state, connectivity
@@ -295,15 +297,15 @@ revenium-codex backfill --since 7d   # Import historical sessions
 
 Interactive setup wizard for Claude Code metering.
 
-| Option | Description |
-|--------|-------------|
-| `--api-key <key>` | Revenium API key (skips prompt) |
-| `--email <email>` | Email for usage attribution |
-| `--tier <tier>` | Subscription tier: `pro`, `max_5x`, `max_20x`, `team_premium`, `enterprise`, `api` |
-| `--endpoint <url>` | Revenium API endpoint (default: `https://api.revenium.ai`) |
-| `--organization <name>` | Organization name |
-| `--product <name>` | Product name |
-| `--skip-shell-update` | Skip shell profile modification |
+| Option                  | Description                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| `--api-key <key>`       | Revenium API key (skips prompt)                                                    |
+| `--email <email>`       | Email for usage attribution                                                        |
+| `--tier <tier>`         | Subscription tier: `pro`, `max_5x`, `max_20x`, `team_premium`, `enterprise`, `api` |
+| `--endpoint <url>`      | Revenium API endpoint (default: `https://api.revenium.ai`)                         |
+| `--organization <name>` | Organization name                                                                  |
+| `--product <name>`      | Product name                                                                       |
+| `--skip-shell-update`   | Skip shell profile modification                                                    |
 
 #### `status`
 
@@ -313,21 +315,21 @@ Displays current configuration (masked credentials), environment variable load s
 
 Sends a test OTLP metric and displays the response.
 
-| Option | Description |
-|--------|-------------|
+| Option      | Description                        |
+| ----------- | ---------------------------------- |
 | `--verbose` | Show full request/response details |
 
 #### `backfill`
 
 Imports historical usage data from Claude Code JSONL files (`~/.claude/projects/`).
 
-| Option | Description |
-|--------|-------------|
-| `--since <date>` | Import since date (ISO format or relative: `7d`, `1m`, `3m`) |
-| `--dry-run` | Preview records without sending |
-| `--batch-size <n>` | Records per batch, max 100 (default: 10) |
-| `--delay <ms>` | Minimum delay between batches in ms (default: 0) |
-| `--verbose` | Show per-record details |
+| Option             | Description                                                  |
+| ------------------ | ------------------------------------------------------------ |
+| `--since <date>`   | Import since date (ISO format or relative: `7d`, `1m`, `3m`) |
+| `--dry-run`        | Preview records without sending                              |
+| `--batch-size <n>` | Records per batch, max 100 (default: 10)                     |
+| `--delay <ms>`     | Minimum delay between batches in ms (default: 0)             |
+| `--verbose`        | Show per-record details                                      |
 
 ### Gemini CLI (`revenium-gemini`)
 
@@ -335,15 +337,15 @@ Imports historical usage data from Claude Code JSONL files (`~/.claude/projects/
 
 Interactive setup wizard for Gemini CLI metering. Generates both bash and fish shell configurations.
 
-| Option | Description |
-|--------|-------------|
-| `--api-key <key>` | Revenium API key |
-| `--email <email>` | Email for usage attribution |
-| `--organization <name>` | Organization name |
-| `--product <name>` | Product name |
+| Option                  | Description                                            |
+| ----------------------- | ------------------------------------------------------ |
+| `--api-key <key>`       | Revenium API key                                       |
+| `--email <email>`       | Email for usage attribution                            |
+| `--organization <name>` | Organization name                                      |
+| `--product <name>`      | Product name                                           |
 | `--cost-multiplier <n>` | Cost multiplier for pricing adjustments (default: 1.0) |
-| `--endpoint <url>` | Revenium API endpoint |
-| `--skip-shell-update` | Skip shell profile modification |
+| `--endpoint <url>`      | Revenium API endpoint                                  |
+| `--skip-shell-update`   | Skip shell profile modification                        |
 
 #### `status`
 
@@ -353,8 +355,8 @@ Displays configuration, shell environment status, and endpoint health.
 
 Sends a test OTLP metric.
 
-| Option | Description |
-|--------|-------------|
+| Option      | Description                        |
+| ----------- | ---------------------------------- |
 | `--verbose` | Show full request/response details |
 
 ### Cursor IDE (`revenium-cursor`)
@@ -363,16 +365,16 @@ Sends a test OTLP metric.
 
 Interactive setup wizard requiring both Cursor Admin API and Revenium API keys.
 
-| Option | Description |
-|--------|-------------|
-| `--cursor-api-key <key>` | Cursor admin API key |
-| `--api-key <key>` | Revenium API key |
-| `--email <email>` | Email for usage attribution |
-| `--organization <name>` | Organization name |
-| `--product <name>` | Product name |
-| `--endpoint <url>` | Revenium API endpoint |
+| Option                       | Description                                         |
+| ---------------------------- | --------------------------------------------------- |
+| `--cursor-api-key <key>`     | Cursor admin API key                                |
+| `--api-key <key>`            | Revenium API key                                    |
+| `--email <email>`            | Email for usage attribution                         |
+| `--organization <name>`      | Organization name                                   |
+| `--product <name>`           | Product name                                        |
+| `--endpoint <url>`           | Revenium API endpoint                               |
 | `--subscription-tier <tier>` | Cursor tier: `pro`, `business`, `enterprise`, `api` |
-| `--sync-interval <min>` | Sync interval in minutes (default: 5) |
+| `--sync-interval <min>`      | Sync interval in minutes (default: 5)               |
 
 #### `status`
 
@@ -382,19 +384,19 @@ Displays configuration, sync state (last sync time, event count), and connectivi
 
 Sends a test OTLP metric.
 
-| Option | Description |
-|--------|-------------|
+| Option      | Description                        |
+| ----------- | ---------------------------------- |
 | `--verbose` | Show full request/response details |
 
 #### `sync`
 
 Syncs Cursor usage events to Revenium.
 
-| Option | Description |
-|--------|-------------|
-| `--watch` | Run continuously with periodic sync |
-| `--from <date>` | Sync from date (ISO format) |
-| `--to <date>` | Sync to date (ISO format) |
+| Option          | Description                         |
+| --------------- | ----------------------------------- |
+| `--watch`       | Run continuously with periodic sync |
+| `--from <date>` | Sync from date (ISO format)         |
+| `--to <date>`   | Sync to date (ISO format)           |
 
 #### `reset`
 
@@ -404,32 +406,32 @@ Clears sync state for a fresh sync. Displays current state before resetting.
 
 Imports historical Cursor usage data.
 
-| Option | Description |
-|--------|-------------|
-| `--since <date>` | Import since date |
-| `--to <date>` | Import until date |
-| `--dry-run` | Preview without sending |
-| `--batch-size <n>` | Records per batch, max 100 (default: 10) |
-| `--delay <ms>` | Minimum delay between batches in ms (default: 0) |
-| `--verbose` | Show per-record details |
+| Option             | Description                                      |
+| ------------------ | ------------------------------------------------ |
+| `--since <date>`   | Import since date                                |
+| `--to <date>`      | Import until date                                |
+| `--dry-run`        | Preview without sending                          |
+| `--batch-size <n>` | Records per batch, max 100 (default: 10)         |
+| `--delay <ms>`     | Minimum delay between batches in ms (default: 0) |
+| `--verbose`        | Show per-record details                          |
 
 ### GitHub Copilot (`revenium-copilot`)
 
 #### `setup`
 
-Interactive setup wizard for GitHub Copilot metering. Requires a GitHub token and organization slug.
+Interactive setup wizard for GitHub Copilot metering. Requires a GitHub PAT (classic) with `manage_billing:copilot`, `read:org`, and `admin:org` scopes. The "Copilot usage metrics" policy must be enabled in your GitHub org settings (Settings > Copilot > Policies).
 
-| Option | Description |
-|--------|-------------|
-| `--github-token <token>` | GitHub personal access token |
-| `--github-org <org>` | GitHub organization slug |
-| `--api-key <key>` | Revenium API key |
-| `--email <email>` | Email for usage attribution |
-| `--organization <name>` | Organization name |
-| `--product <name>` | Product name |
-| `--endpoint <url>` | Revenium API endpoint |
+| Option                       | Description                                          |
+| ---------------------------- | ---------------------------------------------------- |
+| `--github-token <token>`     | GitHub personal access token                         |
+| `--github-org <org>`         | GitHub organization slug                             |
+| `--api-key <key>`            | Revenium API key                                     |
+| `--email <email>`            | Email for usage attribution                          |
+| `--organization <name>`      | Organization name                                    |
+| `--product <name>`           | Product name                                         |
+| `--endpoint <url>`           | Revenium API endpoint                                |
 | `--subscription-tier <tier>` | Copilot tier: `individual`, `business`, `enterprise` |
-| `--sync-interval <min>` | Sync interval in minutes (default: 5) |
+| `--sync-interval <min>`      | Sync interval in minutes (default: 5)                |
 
 #### `status`
 
@@ -439,20 +441,20 @@ Displays configuration, sync state, and connectivity to both GitHub and Revenium
 
 Sends a test OTLP metric.
 
-| Option | Description |
-|--------|-------------|
+| Option      | Description                        |
+| ----------- | ---------------------------------- |
 | `--verbose` | Show full request/response details |
 
 #### `sync`
 
-Syncs GitHub Copilot organization usage events to Revenium.
+Syncs per-user Copilot usage metrics and billing cost data to Revenium.
 
-| Option | Description |
-|--------|-------------|
-| `--watch` | Run continuously with configured interval |
-| `--from <date>` | Start date for sync range (YYYY-MM-DD) |
-| `--to <date>` | End date for sync range (YYYY-MM-DD) |
-| `--dry-run` | Output OTLP JSON without sending data |
+| Option          | Description                               |
+| --------------- | ----------------------------------------- |
+| `--watch`       | Run continuously with configured interval |
+| `--from <date>` | Start date for sync range (YYYY-MM-DD)    |
+| `--to <date>`   | End date for sync range (YYYY-MM-DD)      |
+| `--dry-run`     | Output OTLP JSON without sending data     |
 
 #### `reset`
 
@@ -460,16 +462,16 @@ Clears sync state for a fresh sync.
 
 #### `backfill`
 
-Imports historical GitHub Copilot usage data (max 28 days via GitHub API).
+Imports historical GitHub Copilot usage data (default lookback: 28 days).
 
-| Option | Description |
-|--------|-------------|
-| `--since <date>` | Start date (ISO 8601 or relative: `7d`, `1m`) |
-| `--to <date>` | End date (ISO 8601, defaults to now) |
-| `--dry-run` | Preview without sending |
-| `--batch-size <n>` | Events per batch, max 100 (default: 10) |
-| `--delay <ms>` | Minimum delay between batches in ms (default: 0) |
-| `--verbose` | Show detailed output |
+| Option             | Description                                      |
+| ------------------ | ------------------------------------------------ |
+| `--since <date>`   | Start date (ISO 8601 or relative: `7d`, `1m`)    |
+| `--to <date>`      | End date (ISO 8601, defaults to now)             |
+| `--dry-run`        | Preview without sending                          |
+| `--batch-size <n>` | Events per batch, max 100 (default: 10)          |
+| `--delay <ms>`     | Minimum delay between batches in ms (default: 0) |
+| `--verbose`        | Show detailed output                             |
 
 ### OpenAI Codex CLI (`revenium-codex`)
 
@@ -477,119 +479,119 @@ Imports historical GitHub Copilot usage data (max 28 days via GitHub API).
 
 Interactive setup wizard for Codex CLI metering. Writes OTLP config to `~/.codex/config.toml`.
 
-| Option | Description |
-|--------|-------------|
-| `--api-key <key>` | Revenium API key |
-| `--email <email>` | Email for usage attribution |
-| `--organization <name>` | Organization name |
-| `--product <name>` | Product name |
-| `--endpoint <url>` | Revenium API endpoint |
-| `--config-path <path>` | Path to Codex config.toml (default: `~/.codex/config.toml`) |
-| `--skip-shell-update` | Skip shell profile modification |
-| `--force` | Overwrite existing `[otel]` config without prompting |
+| Option                  | Description                                                 |
+| ----------------------- | ----------------------------------------------------------- |
+| `--api-key <key>`       | Revenium API key                                            |
+| `--email <email>`       | Email for usage attribution                                 |
+| `--organization <name>` | Organization name                                           |
+| `--product <name>`      | Product name                                                |
+| `--endpoint <url>`      | Revenium API endpoint                                       |
+| `--config-path <path>`  | Path to Codex config.toml (default: `~/.codex/config.toml`) |
+| `--skip-shell-update`   | Skip shell profile modification                             |
+| `--force`               | Overwrite existing `[otel]` config without prompting        |
 
 #### `status`
 
 Displays Codex OTLP configuration and endpoint health.
 
-| Option | Description |
-|--------|-------------|
+| Option                 | Description               |
+| ---------------------- | ------------------------- |
 | `--config-path <path>` | Path to Codex config.toml |
 
 #### `test`
 
 Sends a test OTLP metric.
 
-| Option | Description |
-|--------|-------------|
-| `--verbose` | Show full request/response details |
-| `--config-path <path>` | Path to Codex config.toml |
+| Option                 | Description                        |
+| ---------------------- | ---------------------------------- |
+| `--verbose`            | Show full request/response details |
+| `--config-path <path>` | Path to Codex config.toml          |
 
 #### `backfill`
 
 Imports historical Codex usage sessions from `~/.codex/sessions/`.
 
-| Option | Description |
-|--------|-------------|
-| `--since <date>` | Start date (ISO or relative: `7d`, `1m`) |
-| `--to <date>` | End date (ISO format, defaults to now) |
-| `--dry-run` | Preview without sending |
-| `--batch-size <n>` | Records per batch |
-| `--verbose` | Show detailed output |
-| `--sessions-path <path>` | Path to Codex sessions root |
-| `--config-path <path>` | Path to Codex config.toml |
+| Option                   | Description                              |
+| ------------------------ | ---------------------------------------- |
+| `--since <date>`         | Start date (ISO or relative: `7d`, `1m`) |
+| `--to <date>`            | End date (ISO format, defaults to now)   |
+| `--dry-run`              | Preview without sending                  |
+| `--batch-size <n>`       | Records per batch                        |
+| `--verbose`              | Show detailed output                     |
+| `--sessions-path <path>` | Path to Codex sessions root              |
+| `--config-path <path>`   | Path to Codex config.toml                |
 
 ## Subscription Tiers
 
 ### Claude Code
 
-| Tier | Plan | Cost Multiplier |
-|------|------|-----------------|
-| `pro` | Pro (~$20/mo) | 0.16 |
-| `max_5x` | Max 5x (~$100/mo) | 0.16 |
-| `max_20x` | Max 20x (~$200/mo) | 0.08 |
-| `team_premium` | Team Premium (~$125/seat) | 0.20 |
-| `enterprise` | Enterprise (custom) | 0.05 |
-| `api` | API (no subscription) | 1.00 |
+| Tier           | Plan                      | Cost Multiplier |
+| -------------- | ------------------------- | --------------- |
+| `pro`          | Pro (~$20/mo)             | 0.16            |
+| `max_5x`       | Max 5x (~$100/mo)         | 0.16            |
+| `max_20x`      | Max 20x (~$200/mo)        | 0.08            |
+| `team_premium` | Team Premium (~$125/seat) | 0.20            |
+| `enterprise`   | Enterprise (custom)       | 0.05            |
+| `api`          | API (no subscription)     | 1.00            |
 
 ### Cursor
 
-| Tier | Plan | Cost Multiplier |
-|------|------|-----------------|
-| `pro` | Pro ($20/mo) | 0.04 |
-| `business` | Business ($40/seat/mo) | 0.08 |
-| `enterprise` | Enterprise (custom) | 0.05 |
-| `api` | API / Pay-as-you-go | 1.00 |
+| Tier         | Plan                   | Cost Multiplier |
+| ------------ | ---------------------- | --------------- |
+| `pro`        | Pro ($20/mo)           | 0.04            |
+| `business`   | Business ($40/seat/mo) | 0.08            |
+| `enterprise` | Enterprise (custom)    | 0.05            |
+| `api`        | API / Pay-as-you-go    | 1.00            |
 
 ### GitHub Copilot
 
-| Tier | Plan | Price |
-|------|------|-------|
-| `individual` | Individual | $10/month |
-| `business` | Business | $19/user/month |
+| Tier         | Plan       | Price          |
+| ------------ | ---------- | -------------- |
+| `individual` | Individual | $10/month      |
+| `business`   | Business   | $19/user/month |
 | `enterprise` | Enterprise | $39/user/month |
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `REVENIUM_API_KEY` | Yes | Revenium API key (starts with `hak_` or `rev_`) |
-| `REVENIUM_ENDPOINT` | No | API endpoint (default: `https://api.revenium.ai`) |
-| `REVENIUM_EMAIL` | No | Email for usage attribution |
-| `REVENIUM_ORGANIZATION_NAME` | No | Organization name for cost attribution |
-| `REVENIUM_PRODUCT_NAME` | No | Product name for cost attribution |
-| `REVENIUM_COST_MULTIPLIER` | No | Cost multiplier override (default: 1.0) |
+| Variable                     | Required | Description                                       |
+| ---------------------------- | -------- | ------------------------------------------------- |
+| `REVENIUM_API_KEY`           | Yes      | Revenium API key (starts with `hak_` or `rev_`)   |
+| `REVENIUM_ENDPOINT`          | No       | API endpoint (default: `https://api.revenium.ai`) |
+| `REVENIUM_EMAIL`             | No       | Email for usage attribution                       |
+| `REVENIUM_ORGANIZATION_NAME` | No       | Organization name for cost attribution            |
+| `REVENIUM_PRODUCT_NAME`      | No       | Product name for cost attribution                 |
+| `REVENIUM_COST_MULTIPLIER`   | No       | Cost multiplier override (default: 1.0)           |
 
 ### Cursor-Specific Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CURSOR_API_KEY` | Yes (Cursor) | Cursor admin API key |
-| `CURSOR_SUBSCRIPTION_TIER` | No | Subscription tier: `pro`, `business`, `enterprise`, `api` |
-| `REVENIUM_SYNC_INTERVAL_MS` | No | Sync interval in milliseconds (default: 300000) |
+| Variable                    | Required     | Description                                               |
+| --------------------------- | ------------ | --------------------------------------------------------- |
+| `CURSOR_API_KEY`            | Yes (Cursor) | Cursor admin API key                                      |
+| `CURSOR_SUBSCRIPTION_TIER`  | No           | Subscription tier: `pro`, `business`, `enterprise`, `api` |
+| `REVENIUM_SYNC_INTERVAL_MS` | No           | Sync interval in milliseconds (default: 300000)           |
 
 ### Copilot-Specific Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes (Copilot) | GitHub personal access token |
-| `GITHUB_ORG` | Yes (Copilot) | GitHub organization slug |
-| `COPILOT_SUBSCRIPTION_TIER` | No | Subscription tier: `individual`, `business`, `enterprise` |
-| `REVENIUM_SYNC_INTERVAL_MS` | No | Sync interval in milliseconds (default: 300000) |
+| Variable                    | Required      | Description                                               |
+| --------------------------- | ------------- | --------------------------------------------------------- |
+| `GITHUB_TOKEN`              | Yes (Copilot) | GitHub personal access token                              |
+| `GITHUB_ORG`                | Yes (Copilot) | GitHub organization slug                                  |
+| `COPILOT_SUBSCRIPTION_TIER` | No            | Subscription tier: `individual`, `business`, `enterprise` |
+| `REVENIUM_SYNC_INTERVAL_MS` | No            | Sync interval in milliseconds (default: 300000)           |
 
 ### Configuration File Locations
 
-| Tool | Config Path | Permissions |
-|------|-------------|-------------|
-| Claude Code | `~/.claude/revenium.env` | 0o600 (owner read/write) |
-| Gemini CLI | `~/.gemini/revenium.env` | 0o600 (owner read/write) |
-| Cursor IDE | `~/.cursor/revenium/revenium.env` | 0o600 (owner read/write) |
-| Cursor State | `~/.cursor/revenium/state.json` | 0o600 (owner read/write) |
+| Tool           | Config Path                               | Permissions              |
+| -------------- | ----------------------------------------- | ------------------------ |
+| Claude Code    | `~/.claude/revenium.env`                  | 0o600 (owner read/write) |
+| Gemini CLI     | `~/.gemini/revenium.env`                  | 0o600 (owner read/write) |
+| Cursor IDE     | `~/.cursor/revenium/revenium.env`         | 0o600 (owner read/write) |
+| Cursor State   | `~/.cursor/revenium/state.json`           | 0o600 (owner read/write) |
 | GitHub Copilot | `~/.github-copilot/revenium/revenium.env` | 0o600 (owner read/write) |
-| Copilot State | `~/.github-copilot/revenium/state.json` | 0o600 (owner read/write) |
-| Codex CLI | `~/.codex/config.toml` (`[otel]` section) | — |
+| Copilot State  | `~/.github-copilot/revenium/state.json`   | 0o600 (owner read/write) |
+| Codex CLI      | `~/.codex/config.toml` (`[otel]` section) | —                        |
 
 See [`.env.example`](https://github.com/revenium/revenium-cli-node/blob/HEAD/.env.example) for the complete list with all optional configuration.
 
@@ -610,39 +612,39 @@ import {
   maskEmail,
   detectShell,
   getProfilePath,
-} from '@revenium/cli';
+} from "@revenium/cli";
 ```
 
 ### Validation
 
-| Function | Description |
-|----------|-------------|
-| `validateApiKey(key)` | Validate Revenium API key format (`hak_` or `rev_` prefix, min length) |
-| `validateEmail(email)` | Validate email address format (RFC-compliant) |
-| `validateEndpointUrl(url)` | Validate endpoint URL format and protocol |
+| Function                   | Description                                                            |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `validateApiKey(key)`      | Validate Revenium API key format (`hak_` or `rev_` prefix, min length) |
+| `validateEmail(email)`     | Validate email address format (RFC-compliant)                          |
+| `validateEndpointUrl(url)` | Validate endpoint URL format and protocol                              |
 
 ### OTLP Client
 
-| Function | Description |
-|----------|-------------|
+| Function                                  | Description                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------ |
 | `sendOtlpLogs(payload, endpoint, apiKey)` | Send OTLP log payload with retry (3 attempts, exponential backoff) |
 
 ### Health Check
 
-| Function | Description |
-|----------|-------------|
+| Function                                | Description                                           |
+| --------------------------------------- | ----------------------------------------------------- |
 | `checkEndpointHealth(endpoint, apiKey)` | Test Revenium endpoint connectivity (returns latency) |
-| `createTestPayload()` | Create a test OTLP payload with metadata |
-| `generateTestSessionId()` | Generate a unique test session ID |
+| `createTestPayload()`                   | Create a test OTLP payload with metadata              |
+| `generateTestSessionId()`               | Generate a unique test session ID                     |
 
 ### Shell Utilities
 
-| Function | Description |
-|----------|-------------|
-| `detectShell()` | Detect current shell type (`bash`, `zsh`, `fish`, `unknown`) |
-| `getProfilePath(shell)` | Get shell profile file path for the detected shell |
-| `maskApiKey(key)` | Mask API key for safe display (first 4 + last 4 chars) |
-| `maskEmail(email)` | Mask email for safe display (first char + domain) |
+| Function                | Description                                                  |
+| ----------------------- | ------------------------------------------------------------ |
+| `detectShell()`         | Detect current shell type (`bash`, `zsh`, `fish`, `unknown`) |
+| `getProfilePath(shell)` | Get shell profile file path for the detected shell           |
+| `maskApiKey(key)`       | Mask API key for safe display (first 4 + last 4 chars)       |
+| `maskEmail(email)`      | Mask email for safe display (first char + domain)            |
 
 ### Type Exports
 
@@ -660,7 +662,7 @@ import type {
   ToolMetadata,
   ToolEventPayload,
   ToolCallReport,
-} from '@revenium/cli';
+} from "@revenium/cli";
 ```
 
 ## Troubleshooting
@@ -689,12 +691,13 @@ import type {
 
 ### Copilot sync not working
 
-1. Verify `GITHUB_TOKEN` has `manage_billing:copilot` or `read:org` scope
-2. Verify `GITHUB_ORG` matches your GitHub organization slug
-3. Run `revenium-copilot status` to check connectivity to both APIs
-4. Try `revenium-copilot reset` to clear sync state and start fresh
-5. Check for lock file: `~/.github-copilot/revenium/revenium-copilot.lock`
-6. GitHub Copilot API returns max 28 days of usage data per request
+1. Verify `GITHUB_TOKEN` has `manage_billing:copilot`, `read:org`, and `admin:org` scopes
+2. Verify the "Copilot usage metrics" policy is enabled (GitHub Org > Settings > Copilot > Policies)
+3. Verify `GITHUB_ORG` matches your GitHub organization slug
+4. Run `revenium-copilot status` to check connectivity to both APIs
+5. Try `revenium-copilot reset` to clear sync state and start fresh
+6. Check for lock file: `~/.github-copilot/revenium/revenium-copilot.lock`
+7. GitHub usage data has a ~24 hour delay; data from today may not be available yet
 
 ### Test metric shows 0 processed events
 
@@ -703,6 +706,7 @@ This is expected for test metrics. The endpoint acknowledges receipt but process
 ### Debug
 
 Contact support@revenium.io with:
+
 - CLI tool name and version (`revenium-metering --version`)
 - Output of `status` command
 - Operating system and shell type

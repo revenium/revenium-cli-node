@@ -1,5 +1,11 @@
-import { GITHUB_API_BASE_URL, MAX_DAYS_PER_REQUEST } from "../constants.js";
-import type { CopilotUsageDay } from "../types.js";
+import { GITHUB_API_BASE_URL, GITHUB_API_VERSION, DEFAULT_LOOKBACK_DAYS } from "../constants.js";
+import type {
+  CopilotUsageDay,
+  CopilotUsageBreakdown,
+  CopilotMetricsReportResponse,
+  CopilotUserDayReport,
+  BillingUsageResponse,
+} from "../types.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
@@ -52,23 +58,11 @@ function parseRetryAfter(header: string | null, attempt: number): number {
   return fallback;
 }
 
-function parseNextPageUrl(linkHeader: string): string | null {
-  const parts = linkHeader.split(",");
-  for (const part of parts) {
-    const match = part.match(/<([^>]+)>;\s*rel="next"/);
-    if (match) return match[1];
-  }
-  return null;
-}
-
 function formatDateParam(date: Date): string {
   return date.toISOString().split("T")[0];
 }
 
-async function githubRequest<T>(
-  url: string,
-  token: string,
-): Promise<{ data: T; nextUrl: string | null }> {
+async function githubRequest<T>(url: string, token: string): Promise<T> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -81,7 +75,7 @@ async function githubRequest<T>(
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2022-11-28",
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
         },
         signal: controller.signal,
       });
@@ -108,11 +102,11 @@ async function githubRequest<T>(
         throw new Error(`GitHub API ${response.status} ${response.statusText} - ${sanitized}`);
       }
 
-      const data = (await response.json()) as T;
-      const linkHeader = response.headers.get("link");
-      const nextUrl = linkHeader ? parseNextPageUrl(linkHeader) : null;
-
-      return { data, nextUrl };
+      const text = await response.text();
+      if (!text || text.trim().length === 0) {
+        return null as T;
+      }
+      return JSON.parse(text) as T;
     } catch (error) {
       clearTimeout(timeoutId);
 
@@ -137,6 +131,164 @@ async function githubRequest<T>(
   throw lastError || new Error("GitHub API request failed after retries");
 }
 
+async function downloadNdjson(url: string): Promise<string> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const err = new Error(`NDJSON download failed: ${response.status} ${response.statusText}`);
+        if (isRetryableStatusCode(response.status) && attempt < MAX_RETRIES - 1) {
+          lastError = err;
+          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          continue;
+        }
+        throw err;
+      }
+
+      return await response.text();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error) {
+        if (error.name === "AbortError") {
+          lastError = new Error(`NDJSON download timeout after ${REQUEST_TIMEOUT_MS}ms`);
+        } else {
+          lastError = error;
+        }
+        if (isRetryableError(lastError) && attempt < MAX_RETRIES - 1) {
+          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          continue;
+        }
+        throw lastError;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError || new Error("NDJSON download failed after retries");
+}
+
+function parseNdjson<T>(text: string): T[] {
+  const results: T[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim().length === 0) continue;
+    try {
+      results.push(JSON.parse(line) as T);
+    } catch {
+      continue;
+    }
+  }
+  return results;
+}
+
+export function convertUserReportToUsageDay(
+  day: string,
+  users: CopilotUserDayReport[],
+): CopilotUsageDay {
+  const breakdowns: CopilotUsageBreakdown[] = [];
+  let totalSuggestions = 0;
+  let totalAcceptances = 0;
+  let totalLinesSuggested = 0;
+  let totalLinesAccepted = 0;
+  let totalChatTurns = 0;
+  let chatUsers = 0;
+
+  for (const user of users) {
+    const primaryIde = user.totals_by_ide?.[0]?.ide ?? "unknown";
+
+    if (user.used_chat || user.used_agent) {
+      chatUsers++;
+      totalChatTurns += user.user_initiated_interaction_count;
+    }
+
+    for (const entry of user.totals_by_language_model ?? []) {
+      totalSuggestions += entry.code_generation_activity_count;
+      totalAcceptances += entry.code_acceptance_activity_count;
+      totalLinesSuggested += entry.loc_suggested_to_add_sum;
+      totalLinesAccepted += entry.loc_added_sum;
+
+      breakdowns.push({
+        language: entry.language,
+        editor: primaryIde,
+        model: entry.model,
+        user_login: user.user_login,
+        cost_usd: 0,
+        suggestions_count: entry.code_generation_activity_count,
+        acceptances_count: entry.code_acceptance_activity_count,
+        lines_suggested: entry.loc_suggested_to_add_sum,
+        lines_accepted: entry.loc_added_sum,
+        active_users: 1,
+      });
+    }
+  }
+
+  return {
+    day,
+    total_suggestions_count: totalSuggestions,
+    total_acceptances_count: totalAcceptances,
+    total_lines_suggested: totalLinesSuggested,
+    total_lines_accepted: totalLinesAccepted,
+    total_active_users: users.length,
+    total_chat_acceptances: 0,
+    total_chat_turns: totalChatTurns,
+    total_active_chat_users: chatUsers,
+    breakdown: breakdowns,
+  };
+}
+
+async function fetchBillingForDay(
+  token: string,
+  org: string,
+  date: Date,
+): Promise<Map<string, number>> {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
+  const day = date.getUTCDate();
+
+  const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/settings/billing/ai_credit/usage?year=${year}&month=${month}&day=${day}`;
+
+  try {
+    const response = await githubRequest<BillingUsageResponse | null>(url, token);
+    const costByModel = new Map<string, number>();
+
+    if (response?.usageItems) {
+      for (const item of response.usageItems) {
+        const normalizedModel = item.model.replace(/^Auto:\s*/i, "").toLowerCase();
+        const existing = costByModel.get(normalizedModel) ?? 0;
+        costByModel.set(normalizedModel, existing + item.grossAmount);
+      }
+    }
+
+    return costByModel;
+  } catch {
+    return new Map();
+  }
+}
+
+function enrichBreakdownsWithCost(
+  breakdowns: CopilotUsageBreakdown[],
+  costByModel: Map<string, number>,
+): void {
+  const countPerModel = new Map<string, number>();
+  for (const b of breakdowns) {
+    const key = b.model.toLowerCase();
+    countPerModel.set(key, (countPerModel.get(key) ?? 0) + 1);
+  }
+
+  for (const b of breakdowns) {
+    const key = b.model.toLowerCase();
+    const totalCost = costByModel.get(key) ?? 0;
+    const count = countPerModel.get(key) ?? 1;
+    b.cost_usd = totalCost / count;
+  }
+}
+
 export async function* fetchUsageDays(
   token: string,
   org: string,
@@ -145,55 +297,57 @@ export async function* fetchUsageDays(
 ): AsyncGenerator<CopilotUsageDay[]> {
   const now = new Date();
   const defaultSince = new Date(now);
-  defaultSince.setDate(defaultSince.getDate() - MAX_DAYS_PER_REQUEST);
+  defaultSince.setDate(defaultSince.getDate() - DEFAULT_LOOKBACK_DAYS);
 
   const sinceDate = since ? new Date(since) : defaultSince;
   const untilDate = until ? new Date(until) : now;
 
-  const msPerChunk = MAX_DAYS_PER_REQUEST * 24 * 60 * 60 * 1000;
-  let chunkStart = new Date(sinceDate);
+  const current = new Date(sinceDate);
 
-  while (chunkStart < untilDate) {
-    const chunkEnd = new Date(Math.min(chunkStart.getTime() + msPerChunk, untilDate.getTime()));
+  while (current <= untilDate) {
+    const dayParam = formatDateParam(current);
 
-    const params = new URLSearchParams({
-      since: formatDateParam(chunkStart),
-      until: formatDateParam(chunkEnd),
-    });
+    const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/metrics/reports/users-1-day?day=${dayParam}`;
 
-    let url: string | null =
-      `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/usage?${params.toString()}`;
+    try {
+      const report = await githubRequest<CopilotMetricsReportResponse | null>(url, token);
 
-    while (url) {
-      const result: { data: CopilotUsageDay[]; nextUrl: string | null } = await githubRequest<
-        CopilotUsageDay[]
-      >(url, token);
+      if (report?.download_links && report.download_links.length > 0) {
+        const allUsers: CopilotUserDayReport[] = [];
 
-      if (result.data.length > 0) {
-        yield result.data;
+        for (const link of report.download_links) {
+          const ndjsonText = await downloadNdjson(link);
+          const users = parseNdjson<CopilotUserDayReport>(ndjsonText);
+          allUsers.push(...users);
+        }
+
+        if (allUsers.length > 0) {
+          const usageDay = convertUserReportToUsageDay(dayParam, allUsers);
+          const costByModel = await fetchBillingForDay(token, org, current);
+          enrichBreakdownsWithCost(usageDay.breakdown, costByModel);
+          yield [usageDay];
+        }
       }
-
-      url = result.nextUrl;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("404")) {
+        current.setDate(current.getDate() + 1);
+        continue;
+      }
+      throw error;
     }
 
-    chunkStart = chunkEnd;
+    current.setDate(current.getDate() + 1);
   }
 }
 
 export async function testConnectivity(token: string, org: string): Promise<boolean> {
-  const now = new Date();
-  const oneDayAgo = new Date(now);
-  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
 
-  const params = new URLSearchParams({
-    since: formatDateParam(oneDayAgo),
-    until: formatDateParam(now),
-  });
-
-  const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/usage?${params.toString()}`;
+  const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/metrics/reports/users-1-day?day=${formatDateParam(yesterday)}`;
 
   try {
-    await githubRequest<CopilotUsageDay[]>(url, token);
+    await githubRequest<CopilotMetricsReportResponse>(url, token);
     return true;
   } catch {
     return false;
