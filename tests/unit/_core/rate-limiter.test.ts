@@ -9,7 +9,7 @@ import {
 
 describe("rate-limiter constants", () => {
   it("exports expected defaults", () => {
-    expect(DEFAULT_TARGET_TPS).toBe(5);
+    expect(DEFAULT_TARGET_TPS).toBe(1);
     expect(MAX_BATCH_SIZE).toBe(100);
     expect(DEFAULT_BATCH_SIZE).toBe(10);
   });

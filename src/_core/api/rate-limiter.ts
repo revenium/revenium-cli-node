@@ -1,6 +1,6 @@
-import { getTargetTps } from "./resilience.js";
+import { DEFAULT_TARGET_TPS, getTargetTps } from "./resilience.js";
 
-export const DEFAULT_TARGET_TPS = 5;
+export { DEFAULT_TARGET_TPS };
 export const MAX_BATCH_SIZE = 100;
 export const DEFAULT_BATCH_SIZE = 10;
 
