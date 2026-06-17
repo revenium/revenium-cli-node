@@ -31,8 +31,10 @@ export function getBackoffBaseMs(): number {
   return parsePositiveInt("REVENIUM_BACKOFF_BASE_MS", 1000);
 }
 
+export const DEFAULT_TARGET_TPS = 1;
+
 export function getTargetTps(): number {
-  return parsePositiveFloat("REVENIUM_TARGET_TPS", 5);
+  return parsePositiveFloat("REVENIUM_TARGET_TPS", DEFAULT_TARGET_TPS);
 }
 
 export function getStartupStaggerMs(): number {
