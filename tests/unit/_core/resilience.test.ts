@@ -94,7 +94,7 @@ describe("env var getters", () => {
     expect(getMaxRetries()).toBe(3);
     expect(getRequestTimeoutMs()).toBe(30_000);
     expect(getBackoffBaseMs()).toBe(1000);
-    expect(getTargetTps()).toBe(1);
+    expect(getTargetTps()).toBe(25);
     expect(getStartupStaggerMs()).toBe(5000);
   });
 
@@ -122,7 +122,7 @@ describe("env var getters", () => {
     expect(getMaxRetries()).toBe(3);
     expect(getRequestTimeoutMs()).toBe(30_000);
     expect(getBackoffBaseMs()).toBe(1000);
-    expect(getTargetTps()).toBe(1);
+    expect(getTargetTps()).toBe(25);
     expect(getStartupStaggerMs()).toBe(5000);
   });
 
@@ -131,7 +131,7 @@ describe("env var getters", () => {
     process.env.REVENIUM_TARGET_TPS = "0";
 
     expect(getMaxRetries()).toBe(3);
-    expect(getTargetTps()).toBe(1);
+    expect(getTargetTps()).toBe(25);
   });
 
   it("allows zero for startup stagger to disable it", () => {
@@ -147,6 +147,6 @@ describe("env var getters", () => {
 
     expect(getMaxRetries()).toBe(3);
     expect(getRequestTimeoutMs()).toBe(30_000);
-    expect(getTargetTps()).toBe(1);
+    expect(getTargetTps()).toBe(25);
   });
 });
