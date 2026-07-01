@@ -1,7 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeFile, mkdir, chmod } from "node:fs/promises";
-import { CLAUDE_CONFIG_DIR, ENV_VARS } from "../constants.js";
+import {
+  CLAUDE_CONFIG_DIR,
+  ENV_VARS,
+  MIDDLEWARE_SOURCE_KEY,
+  MIDDLEWARE_SOURCE_CLI,
+} from "../constants.js";
 import { CONFIG_FILE_MODE, REVENIUM_ENV_FILE } from "../../_core/constants.js";
 import {
   escapeDoubleQuotedShellValue,
@@ -13,6 +18,35 @@ import type { ClaudeCodeConfig } from "./loader.js";
 
 function getClaudeConfigDir(): string {
   return join(homedir(), CLAUDE_CONFIG_DIR);
+}
+
+// Shared OTEL_RESOURCE_ATTRIBUTES pairs for the bash and fish writers; always stamps the marker.
+function buildResourceAttributePairs(config: ClaudeCodeConfig): string[] {
+  const resourceAttrs: string[] = [
+    `${MIDDLEWARE_SOURCE_KEY}=${escapeResourceAttributeValue(MIDDLEWARE_SOURCE_CLI)}`,
+  ];
+
+  if (config.subscriptionTier) {
+    resourceAttrs.push(
+      `CLAUDE_CODE_SUBSCRIPTION_TIER=${escapeResourceAttributeValue(config.subscriptionTier)}`,
+    );
+  }
+
+  if (config.email) {
+    resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
+  }
+
+  if (config.organizationName) {
+    resourceAttrs.push(
+      `organization.name=${escapeResourceAttributeValue(config.organizationName)}`,
+    );
+  }
+
+  if (config.productName) {
+    resourceAttrs.push(`product.name=${escapeResourceAttributeValue(config.productName)}`);
+  }
+
+  return resourceAttrs;
 }
 
 export function generateEnvContent(config: ClaudeCodeConfig): string {
@@ -52,35 +86,9 @@ export function generateEnvContent(config: ClaudeCodeConfig): string {
     lines.push(`export ${ENV_VARS.EXTRA_USAGE_ENABLED}=${config.extraUsageEnabled ? 1 : 0}`);
   }
 
-  // Write OTEL_RESOURCE_ATTRIBUTES when email or tier is present
-  if (config.email || config.subscriptionTier) {
-    const resourceAttrs: string[] = [];
-
-    if (config.subscriptionTier) {
-      resourceAttrs.push(
-        `CLAUDE_CODE_SUBSCRIPTION_TIER=${escapeResourceAttributeValue(config.subscriptionTier)}`,
-      );
-    }
-
-    if (config.email) {
-      resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
-    }
-
-    const organizationValue = config.organizationName;
-    if (organizationValue) {
-      resourceAttrs.push(`organization.name=${escapeResourceAttributeValue(organizationValue)}`);
-    }
-
-    const productValue = config.productName;
-    if (productValue) {
-      resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
-    }
-
-    if (resourceAttrs.length > 0) {
-      lines.push("");
-      lines.push(`export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs.join(",")}"`);
-    }
-  }
+  const resourceAttrs = buildResourceAttributePairs(config);
+  lines.push("");
+  lines.push(`export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs.join(",")}"`);
 
   lines.push("");
   return lines.join("\n");
@@ -119,35 +127,9 @@ export function generateFishContent(config: ClaudeCodeConfig): string {
     lines.push(`set -gx ${ENV_VARS.EXTRA_USAGE_ENABLED} ${config.extraUsageEnabled ? 1 : 0}`);
   }
 
-  // Write OTEL_RESOURCE_ATTRIBUTES when email or tier is present
-  if (config.email || config.subscriptionTier) {
-    const resourceAttrs: string[] = [];
-
-    if (config.subscriptionTier) {
-      resourceAttrs.push(
-        `CLAUDE_CODE_SUBSCRIPTION_TIER=${escapeResourceAttributeValue(config.subscriptionTier)}`,
-      );
-    }
-
-    if (config.email) {
-      resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
-    }
-
-    const organizationValue = config.organizationName;
-    if (organizationValue) {
-      resourceAttrs.push(`organization.name=${escapeResourceAttributeValue(organizationValue)}`);
-    }
-
-    const productValue = config.productName;
-    if (productValue) {
-      resourceAttrs.push(`product.name=${escapeResourceAttributeValue(productValue)}`);
-    }
-
-    if (resourceAttrs.length > 0) {
-      lines.push("");
-      lines.push(`set -gx OTEL_RESOURCE_ATTRIBUTES ${escapeFishValue(resourceAttrs.join(","))}`);
-    }
-  }
+  const resourceAttrs = buildResourceAttributePairs(config);
+  lines.push("");
+  lines.push(`set -gx OTEL_RESOURCE_ATTRIBUTES ${escapeFishValue(resourceAttrs.join(","))}`);
 
   lines.push("");
   return lines.join("\n");
