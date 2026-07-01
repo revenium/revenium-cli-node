@@ -42,6 +42,7 @@ export interface ParsedCodexEvent {
   cached: number;
   reasoning: number;
   toolTokens: number;
+  dedupeKey?: string;
 }
 
 function parseRelativeDate(input: string): Date | null {
@@ -103,6 +104,35 @@ export function hashTransactionId(event: ParsedCodexEvent): string {
   return createHash("sha256").update(input).digest("hex").substring(0, 32);
 }
 
+export function deduplicateCodexEvents(events: ParsedCodexEvent[]): {
+  events: ParsedCodexEvent[];
+  duplicateCount: number;
+} {
+  const deduped = new Map<string, ParsedCodexEvent>();
+  const passthrough: ParsedCodexEvent[] = [];
+  let duplicateCount = 0;
+
+  for (const event of events) {
+    if (!event.dedupeKey) {
+      passthrough.push(event);
+      continue;
+    }
+
+    const existing = deduped.get(event.dedupeKey);
+    if (!existing) {
+      deduped.set(event.dedupeKey, event);
+      continue;
+    }
+
+    duplicateCount++;
+    if (BigInt(event.resolvedTimestampNanos) >= BigInt(existing.resolvedTimestampNanos)) {
+      deduped.set(event.dedupeKey, event);
+    }
+  }
+
+  return { events: [...passthrough, ...deduped.values()], duplicateCount };
+}
+
 async function findRolloutFiles(root: string, out: string[] = []): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
@@ -122,6 +152,7 @@ export interface RolloutContext {
   sessionId: string;
   model: string;
   serviceName: string;
+  turnId?: string;
 }
 
 function resolveServiceName(originator?: string): string {
@@ -142,12 +173,19 @@ export function parseSessionMeta(line: string): { sessionId: string; serviceName
 }
 
 export function parseTurnContextModel(line: string): string | null {
+  return parseTurnContext(line)?.model ?? null;
+}
+
+export function parseTurnContext(line: string): { model?: string; turnId?: string } | null {
   const parsed = JSON.parse(line) as {
     type?: string;
-    payload?: { model?: string };
+    payload?: { model?: string; turn_id?: string };
   };
   if (parsed.type !== "turn_context") return null;
-  return parsed.payload?.model ?? null;
+  return {
+    model: parsed.payload?.model,
+    turnId: parsed.payload?.turn_id,
+  };
 }
 
 export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedCodexEvent | null {
@@ -165,6 +203,13 @@ export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedC
           total_tokens?: number;
         } | null;
         model?: string | null;
+        total_token_usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cached_input_tokens?: number;
+          reasoning_output_tokens?: number;
+          total_tokens?: number;
+        } | null;
       } | null;
     };
   };
@@ -181,6 +226,23 @@ export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedC
   if (!resolvedTimestampNanos) return null;
 
   const model = info.model || ctx.model || "unknown";
+  const totalUsage = info.total_token_usage;
+  const totalUsageKey = totalUsage
+    ? [
+        totalUsage.input_tokens ?? 0,
+        totalUsage.output_tokens ?? 0,
+        totalUsage.cached_input_tokens ?? 0,
+        totalUsage.reasoning_output_tokens ?? 0,
+        totalUsage.total_tokens ?? 0,
+      ].join("|")
+    : "missing-total";
+  const lastUsageKey = [
+    usage.input_tokens ?? 0,
+    usage.output_tokens ?? 0,
+    usage.cached_input_tokens ?? 0,
+    usage.reasoning_output_tokens ?? 0,
+    usage.total_tokens ?? 0,
+  ].join("|");
 
   return {
     sessionId: ctx.sessionId,
@@ -192,6 +254,24 @@ export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedC
     cached: usage.cached_input_tokens ?? 0,
     reasoning: usage.reasoning_output_tokens ?? 0,
     toolTokens: 0,
+    dedupeKey: ctx.turnId
+      ? [
+          "codex-token-count-turn",
+          ctx.serviceName || CODEX_EXEC_SERVICE_NAME,
+          ctx.sessionId,
+          model,
+          ctx.turnId,
+        ].join("|")
+      : // Older rollout rows may not have turn_id. Cumulative total_token_usage
+        // advances for distinct billable calls, while repeated snapshots retain it.
+        [
+          "codex-token-count-value",
+          ctx.serviceName || CODEX_EXEC_SERVICE_NAME,
+          ctx.sessionId,
+          model,
+          totalUsageKey,
+          lastUsageKey,
+        ].join("|"),
   };
 }
 
@@ -424,14 +504,23 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
         if (meta) {
           ctx.sessionId = meta.sessionId;
           ctx.serviceName = meta.serviceName;
+          ctx.turnId = undefined;
           continue;
         }
-        const turnModel = parseTurnContextModel(line);
-        if (turnModel) {
-          ctx.model = turnModel;
+        const turnContext = parseTurnContext(line);
+        if (turnContext) {
+          ctx.turnId = turnContext.turnId;
+          if (turnContext.model) {
+            ctx.model = turnContext.model;
+          }
           continue;
         }
-        const event = parseTokenCountEvent(line, ctx) ?? parseCompletedEvent(line);
+        const tokenCountEvent = parseTokenCountEvent(line, ctx);
+        const completedEvent = tokenCountEvent ? null : parseCompletedEvent(line);
+        if (completedEvent) {
+          ctx.turnId = undefined;
+        }
+        const event = tokenCountEvent ?? completedEvent;
         if (!event) continue;
         const ms = Number(event.resolvedTimestampNanos.slice(0, -6));
         if (!Number.isFinite(ms)) continue;
@@ -456,11 +545,16 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
     return;
   }
 
+  const { events: backfillEvents, duplicateCount } = deduplicateCodexEvents(events);
+  if (duplicateCount > 0) {
+    console.log(`  Duplicates:      ${duplicateCount.toLocaleString()}`);
+  }
+
   if (options.dryRun) {
-    console.log(`  Would send:      ${events.length}`);
+    console.log(`  Would send:      ${backfillEvents.length}`);
     if (options.verbose) {
       console.log(chalk.dim("\nSample event:"));
-      console.log(chalk.dim(JSON.stringify(events[0], null, 2)));
+      console.log(chalk.dim(JSON.stringify(backfillEvents[0], null, 2)));
     }
     cleanupSignals();
     return;
@@ -470,10 +564,10 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
 
   const spinner = ora("Sending backfill payloads...").start();
   await startupStagger();
-  const totalBatches = Math.ceil(events.length / batchSize);
+  const totalBatches = Math.ceil(backfillEvents.length / batchSize);
   let sent = 0;
   try {
-    for (let i = 0; i < events.length; i += batchSize) {
+    for (let i = 0; i < backfillEvents.length; i += batchSize) {
       const batchNum = Math.floor(i / batchSize) + 1;
       if (interrupted) {
         spinner.stop();
@@ -485,18 +579,18 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
         cleanupSignals();
         process.exit(130);
       }
-      const batch = events.slice(i, i + batchSize);
+      const batch = backfillEvents.slice(i, i + batchSize);
       await sendOtlpLogs(
         otelValues.endpoint,
         otelValues.apiKey,
         createPayload(batch, resourceAttributes),
       );
       sent += batch.length;
-      spinner.text = `Sending backfill payloads... (${sent}/${events.length})`;
+      spinner.text = `Sending backfill payloads... (${sent}/${backfillEvents.length})`;
     }
     spinner.succeed(`Backfill complete: sent ${sent} event(s)`);
   } catch (error) {
-    spinner.fail(`Backfill failed after sending ${sent}/${events.length} event(s)`);
+    spinner.fail(`Backfill failed after sending ${sent}/${backfillEvents.length} event(s)`);
     console.error(
       chalk.red(`\nError: ${error instanceof Error ? error.message : "Unknown error"}`),
     );

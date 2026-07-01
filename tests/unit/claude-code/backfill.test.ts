@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createOtlpPayload,
+  deduplicateRecords,
   type ParsedRecord,
 } from "../../../src/claude-code/commands/backfill.js";
 
@@ -23,6 +24,13 @@ describe("createOtlpPayload — resource attributes", () => {
     const attrs = payload.resourceLogs[0].resource?.attributes ?? [];
     const serviceName = attrs.find((a) => a.key === "service.name");
     expect(serviceName?.value.stringValue).toBe("claude-code");
+  });
+
+  it("stamps revenium.middleware.source=revenium-cli in resource attributes", () => {
+    const payload = createOtlpPayload([makeRecord()], {});
+    const attrs = payload.resourceLogs[0].resource?.attributes ?? [];
+    const marker = attrs.find((a) => a.key === "revenium.middleware.source");
+    expect(marker?.value.stringValue).toBe("revenium-cli");
   });
 
   it("does NOT include cost_multiplier in resource attributes", () => {
@@ -62,6 +70,36 @@ describe("createOtlpPayload — resource attributes", () => {
 });
 
 describe("createOtlpPayload — log record attributes", () => {
+  it("keeps the transaction_id formula tied to the retained row", () => {
+    const first = makeRecord({
+      requestId: "req_123",
+      messageId: "msg_123",
+      timestamp: "2024-06-01T12:00:00.000Z",
+    });
+    const second = makeRecord({
+      requestId: "req_123",
+      messageId: "msg_123",
+      timestamp: "2024-06-01T12:00:03.000Z",
+    });
+
+    const firstAttrs = createOtlpPayload([first], {}).resourceLogs[0].scopeLogs[0].logRecords[0]
+      .attributes;
+    const secondAttrs = createOtlpPayload([second], {}).resourceLogs[0].scopeLogs[0].logRecords[0]
+      .attributes;
+    const deduped = deduplicateRecords([first, second]).records;
+    const dedupedAttrs = createOtlpPayload(deduped, {}).resourceLogs[0].scopeLogs[0].logRecords[0]
+      .attributes;
+
+    expect(firstAttrs.find((a) => a.key === "transaction_id")?.value.stringValue).not.toBe(
+      secondAttrs.find((a) => a.key === "transaction_id")?.value.stringValue,
+    );
+    expect(dedupedAttrs.find((a) => a.key === "transaction_id")?.value.stringValue).toBe(
+      secondAttrs.find((a) => a.key === "transaction_id")?.value.stringValue,
+    );
+    expect(dedupedAttrs.find((a) => a.key === "request_id")?.value.stringValue).toBe("req_123");
+    expect(dedupedAttrs.find((a) => a.key === "message.id")?.value.stringValue).toBe("msg_123");
+  });
+
   it("includes user.email in log record attributes when provided", () => {
     const payload = createOtlpPayload([makeRecord()], { email: "dev@example.com" });
     const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
@@ -104,6 +142,68 @@ describe("createOtlpPayload — log record attributes", () => {
     expect(logAttrs.find((a) => a.key === "output_tokens")?.value.stringValue).toBe("75");
     expect(logAttrs.find((a) => a.key === "cache_read_tokens")?.value.stringValue).toBe("15");
     expect(logAttrs.find((a) => a.key === "cache_creation_tokens")?.value.stringValue).toBe("8");
+  });
+});
+
+describe("deduplicateRecords", () => {
+  it("keeps the latest Claude Code streaming snapshot for the same request and message", () => {
+    const older = makeRecord({
+      requestId: "req_123",
+      messageId: "msg_123",
+      timestamp: "2024-06-01T12:00:00.000Z",
+      outputTokens: 10,
+    });
+    const latest = makeRecord({
+      requestId: "req_123",
+      messageId: "msg_123",
+      timestamp: "2024-06-01T12:00:02.000Z",
+      outputTokens: 50,
+    });
+    const other = makeRecord({
+      requestId: "req_456",
+      messageId: "msg_456",
+      timestamp: "2024-06-01T12:00:01.000Z",
+      outputTokens: 25,
+    });
+
+    const result = deduplicateRecords([older, other, latest]);
+
+    expect(result.duplicateCount).toBe(1);
+    expect(result.records).toHaveLength(2);
+    expect(result.records.find((r) => r.requestId === "req_123")?.outputTokens).toBe(50);
+    expect(result.records.find((r) => r.requestId === "req_456")?.outputTokens).toBe(25);
+  });
+
+  it("does not collapse records without requestId", () => {
+    const records = [
+      makeRecord({ timestamp: "2024-06-01T12:00:00.000Z" }),
+      makeRecord({ timestamp: "2024-06-01T12:00:01.000Z" }),
+    ];
+
+    const result = deduplicateRecords(records);
+
+    expect(result.duplicateCount).toBe(0);
+    expect(result.records).toHaveLength(2);
+  });
+
+  it("does not collapse records without messageId", () => {
+    const records = [
+      makeRecord({
+        requestId: "req_123",
+        messageId: undefined,
+        timestamp: "2024-06-01T12:00:00.000Z",
+      }),
+      makeRecord({
+        requestId: "req_123",
+        messageId: undefined,
+        timestamp: "2024-06-01T12:00:01.000Z",
+      }),
+    ];
+
+    const result = deduplicateRecords(records);
+
+    expect(result.duplicateCount).toBe(0);
+    expect(result.records).toHaveLength(2);
   });
 });
 

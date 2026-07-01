@@ -62,6 +62,11 @@ describe("generateEnvContent — all fields populated", () => {
     const output = generateEnvContent(fullConfig);
     expect(output).toContain("CLAUDE_CODE_SUBSCRIPTION_TIER=pro");
   });
+
+  it("stamps revenium.middleware.source=revenium-cli in OTEL_RESOURCE_ATTRIBUTES", () => {
+    const output = generateEnvContent(fullConfig);
+    expect(output).toContain("revenium.middleware.source=revenium-cli");
+  });
 });
 
 describe("generateEnvContent — no cost_multiplier anywhere", () => {
@@ -103,9 +108,12 @@ describe("generateEnvContent — user.email in OTEL_RESOURCE_ATTRIBUTES", () => 
     expect(output).toContain("user.email=solo@example.com");
   });
 
-  it("does not include OTEL_RESOURCE_ATTRIBUTES when neither email nor tier is set", () => {
+  it("still writes OTEL_RESOURCE_ATTRIBUTES (channel marker only) when neither email nor tier is set", () => {
     const output = generateEnvContent(minimalConfig);
-    expect(output).not.toContain("OTEL_RESOURCE_ATTRIBUTES");
+    expect(output).toContain("OTEL_RESOURCE_ATTRIBUTES");
+    expect(output).toContain("revenium.middleware.source=revenium-cli");
+    expect(output).not.toContain("user.email=");
+    expect(output).not.toContain("CLAUDE_CODE_SUBSCRIPTION_TIER=");
   });
 });
 
@@ -151,11 +159,12 @@ describe("generateEnvContent — minimal config", () => {
     expect(output).toContain("export OTEL_LOGS_EXPORTER=otlp");
   });
 
-  it("does not include subscription, email, or OTEL_RESOURCE_ATTRIBUTES", () => {
+  it("does not include subscription or email, but does write the channel-marker OTEL_RESOURCE_ATTRIBUTES", () => {
     const output = generateEnvContent(minimalConfig);
     expect(output).not.toContain("CLAUDE_CODE_SUBSCRIPTION");
     expect(output).not.toContain("REVENIUM_SUBSCRIBER_EMAIL");
-    expect(output).not.toContain("OTEL_RESOURCE_ATTRIBUTES");
+    expect(output).toContain("OTEL_RESOURCE_ATTRIBUTES");
+    expect(output).toContain("revenium.middleware.source=revenium-cli");
   });
 });
 
@@ -269,5 +278,13 @@ describe("generateFishContent — mirrors bash content semantically", () => {
     const output = generateFishContent(config);
     expect(output).toContain("OTEL_RESOURCE_ATTRIBUTES");
     expect(output).toContain("user.email=solo@example.com");
+  });
+
+  it("stamps revenium.middleware.source=revenium-cli even on minimal config", () => {
+    const output = generateFishContent(minimalConfig);
+    expect(output).toContain("OTEL_RESOURCE_ATTRIBUTES");
+    expect(output).toContain("revenium.middleware.source=revenium-cli");
+    expect(output).not.toContain("user.email=");
+    expect(output).not.toContain("CLAUDE_CODE_SUBSCRIPTION_TIER=");
   });
 });

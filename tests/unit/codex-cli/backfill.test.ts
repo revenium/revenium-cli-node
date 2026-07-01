@@ -15,12 +15,19 @@ vi.mock("../../../src/_core/api/otlp-client.js", () => ({
   sendOtlpLogs: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/_core/api/resilience.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/_core/api/resilience.js")>();
+  return { ...actual, startupStagger: vi.fn().mockResolvedValue(undefined) };
+});
+
 import {
   parseCompletedEvent,
   parseSessionMeta,
+  parseTurnContext,
   parseTurnContextModel,
   parseTokenCountEvent,
   hashTransactionId,
+  deduplicateCodexEvents,
   parseDateInput,
   backfillAction,
   type ParsedCodexEvent,
@@ -127,6 +134,16 @@ describe("parseSessionMeta (Codex CLI v0.128.0)", () => {
 });
 
 describe("parseTurnContextModel (Codex CLI v0.128.0)", () => {
+  it("extracts model and turn id from a real turn_context line", () => {
+    const line = JSON.stringify({
+      timestamp: "2026-05-03T18:27:56.624Z",
+      type: "turn_context",
+      payload: { turn_id: "t1", model: "gpt-5.3-codex", effort: "medium" },
+    });
+
+    expect(parseTurnContext(line)).toEqual({ model: "gpt-5.3-codex", turnId: "t1" });
+  });
+
   it("extracts model from a real turn_context line", () => {
     const line = JSON.stringify({
       timestamp: "2026-05-03T18:27:56.624Z",
@@ -148,6 +165,7 @@ describe("parseTokenCountEvent (Codex CLI v0.128.0)", () => {
     sessionId: "session-real",
     model: "gpt-5.3-codex",
     serviceName: "codex_cli_rs",
+    turnId: "turn-real",
   };
 
   it("maps a real event_msg/token_count line using last_token_usage", () => {
@@ -185,6 +203,9 @@ describe("parseTokenCountEvent (Codex CLI v0.128.0)", () => {
     expect(result!.cached).toBe(12672);
     expect(result!.reasoning).toBe(56);
     expect(result!.toolTokens).toBe(0);
+    expect(result!.dedupeKey).toContain("session-real");
+    expect(result!.dedupeKey).toContain("turn-real");
+    expect(result!.dedupeKey).not.toContain("30894|868|17664|209|31762");
   });
 
   it("returns null for placeholder token_count events whose info is null", () => {
@@ -235,6 +256,7 @@ describe("parseTokenCountEvent (Codex CLI v0.128.0)", () => {
       sessionId: "s",
       model: "ctx-model",
       serviceName: "codex_exec",
+      turnId: "t1",
     });
     expect(result!.model).toBe("ctx-model");
   });
@@ -319,6 +341,85 @@ describe("hashTransactionId", () => {
     const a = hashTransactionId({ ...sampleEvent, toolTokens: 25 });
     const b = hashTransactionId({ ...sampleEvent, toolTokens: 26 });
     expect(a).not.toBe(b);
+  });
+
+  it("keeps transaction_id tied to the retained event fields even when dedupeKey is present", () => {
+    const a = hashTransactionId({
+      ...sampleEvent,
+      resolvedTimestampNanos: "1700000000000000000",
+      dedupeKey: "codex-token-count-turn|session-1|turn-1",
+    });
+    const b = hashTransactionId({
+      ...sampleEvent,
+      resolvedTimestampNanos: "1700000001000000000",
+      dedupeKey: "codex-token-count-turn|session-1|turn-1",
+    });
+
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("deduplicateCodexEvents", () => {
+  const baseEvent: ParsedCodexEvent = {
+    sessionId: "session-1",
+    serviceName: "codex_cli_rs",
+    resolvedTimestampNanos: "1700000000000000000",
+    model: "gpt-5",
+    inputs: 100,
+    outputs: 50,
+    cached: 10,
+    reasoning: 5,
+    toolTokens: 0,
+    dedupeKey: "codex-token-count-turn|session-1|turn-1",
+  };
+
+  it("keeps the latest growing token_count snapshot for the same turn", () => {
+    const latest = {
+      ...baseEvent,
+      resolvedTimestampNanos: "1700000001000000000",
+      outputs: 55,
+      inputs: 150,
+      cached: 20,
+    };
+
+    const result = deduplicateCodexEvents([baseEvent, latest]);
+
+    expect(result.duplicateCount).toBe(1);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].resolvedTimestampNanos).toBe("1700000001000000000");
+    expect(result.events[0].outputs).toBe(55);
+    expect(result.events[0].inputs).toBe(150);
+  });
+
+  it("does not collapse legacy events without a dedupeKey", () => {
+    const first = { ...baseEvent, dedupeKey: undefined };
+    const second = {
+      ...baseEvent,
+      resolvedTimestampNanos: "1700000001000000000",
+      dedupeKey: undefined,
+    };
+
+    const result = deduplicateCodexEvents([first, second]);
+
+    expect(result.duplicateCount).toBe(0);
+    expect(result.events).toHaveLength(2);
+  });
+
+  it("does not collapse value-fallback events when cumulative totals differ", () => {
+    const first = {
+      ...baseEvent,
+      dedupeKey: "codex-token-count-value|svc|session-1|gpt-5|100|50|10|5|150|100|50|10|5|150",
+    };
+    const second = {
+      ...baseEvent,
+      resolvedTimestampNanos: "1700000001000000000",
+      dedupeKey: "codex-token-count-value|svc|session-1|gpt-5|200|100|20|10|300|100|50|10|5|150",
+    };
+
+    const result = deduplicateCodexEvents([first, second]);
+
+    expect(result.duplicateCount).toBe(0);
+    expect(result.events).toHaveLength(2);
   });
 });
 
@@ -422,6 +523,80 @@ describe("backfillAction — date filtering and dry-run", () => {
     return makeRolloutBody(timestampMs, sessionId);
   }
 
+  function makeGrowingTokenCountRollout(timestampMs: number, sessionId = "s1"): string {
+    const first = makeRolloutBody(timestampMs, sessionId);
+    const duplicateTimestamp = new Date(timestampMs + 1_000).toISOString();
+    const finalTokenCount = JSON.stringify({
+      timestamp: duplicateTimestamp,
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: 125,
+            cached_input_tokens: 20,
+            output_tokens: 80,
+            reasoning_output_tokens: 10,
+            total_tokens: 205,
+          },
+          total_token_usage: {
+            input_tokens: 225,
+            cached_input_tokens: 30,
+            output_tokens: 130,
+            reasoning_output_tokens: 15,
+            total_tokens: 335,
+          },
+          model_context_window: 272000,
+        },
+      },
+    });
+    return [first, finalTokenCount].join("\n");
+  }
+
+  function makeCompletedLine(timestampMs: number, sessionId = "s1"): string {
+    return JSON.stringify({
+      type: "response.completed",
+      session_id: sessionId,
+      resolvedTimestampNanos: (BigInt(timestampMs) * BigInt(1_000_000)).toString(),
+      data: {
+        response: {
+          model: "gpt-5.3-codex",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 0,
+            reasoning_tokens: 1,
+            tool_token_count: 0,
+          },
+        },
+      },
+    });
+  }
+
+  function makeTokenCountLine(
+    timestampMs: number,
+    usage: {
+      input_tokens: number;
+      cached_input_tokens: number;
+      output_tokens: number;
+      reasoning_output_tokens: number;
+      total_tokens: number;
+    },
+  ): string {
+    return JSON.stringify({
+      timestamp: new Date(timestampMs).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: usage,
+          total_token_usage: usage,
+          model_context_window: 272000,
+        },
+      },
+    });
+  }
+
   it("filters events outside the [since, to] window", async () => {
     const now = Date.now();
     const insideWindow = now - 5 * 24 * 60 * 60 * 1000; // 5 days ago
@@ -469,6 +644,58 @@ describe("backfillAction — date filtering and dry-run", () => {
     });
 
     expect(otlpClient.sendOtlpLogs).toHaveBeenCalled();
+  });
+
+  it("deduplicates growing token_count snapshots before sending", async () => {
+    const now = Date.now();
+    writeRollouts([makeGrowingTokenCountRollout(now - 24 * 60 * 60 * 1000, "dup-session")]);
+
+    await backfillAction({
+      since: "30d",
+      dryRun: false,
+      sessionsPath: tempSessionsDir,
+    });
+
+    expect(otlpClient.sendOtlpLogs).toHaveBeenCalledTimes(1);
+    const payload = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2];
+    const records = payload.resourceLogs[0].scopeLogs[0].logRecords;
+    expect(records).toHaveLength(1);
+    expect(records[0].timeUnixNano).toBe(
+      (BigInt(now - 24 * 60 * 60 * 1000 + 1_000) * BigInt(1_000_000)).toString(),
+    );
+    expect(records[0].attributes.find((a) => a.key === "input_token_count")?.value.intValue).toBe(
+      125,
+    );
+    expect(records[0].attributes.find((a) => a.key === "output_token_count")?.value.intValue).toBe(
+      80,
+    );
+  });
+
+  it("clears turn context after response.completed before later token_count rows", async () => {
+    const now = Date.now() - 24 * 60 * 60 * 1000;
+    const firstTurn = makeRolloutBody(now, "stale-turn-session");
+    const completed = makeCompletedLine(now + 500, "stale-turn-session");
+    const laterTokenCount = makeTokenCountLine(now + 1_000, {
+      input_tokens: 100,
+      cached_input_tokens: 10,
+      output_tokens: 50,
+      reasoning_output_tokens: 5,
+      total_tokens: 150,
+    });
+    writeRollouts([[firstTurn, completed, laterTokenCount].join("\n")]);
+
+    await backfillAction({
+      since: "30d",
+      dryRun: false,
+      sessionsPath: tempSessionsDir,
+    });
+
+    const payload = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2];
+    const records = payload.resourceLogs.flatMap((resourceLog) =>
+      resourceLog.scopeLogs.flatMap((scopeLog) => scopeLog.logRecords),
+    );
+
+    expect(records).toHaveLength(3);
   });
 
   it("does not send when all events are outside the window", async () => {

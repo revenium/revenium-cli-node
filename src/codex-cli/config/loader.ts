@@ -49,7 +49,8 @@ export function extractOtelValues(tomlText: string): { endpoint: string; apiKey:
   const otelBlock = extractSection(tomlText, "otel");
   const legacyEndpoint = otelBlock ? /^\s*endpoint\s*=\s*"([^"]+)"/m.exec(otelBlock)?.[1] : null;
   const legacyApiKey = otelBlock ? /^\s*api_key\s*=\s*"([^"]+)"/m.exec(otelBlock)?.[1] : null;
-  if (legacyEndpoint && legacyApiKey) return { endpoint: legacyEndpoint, apiKey: legacyApiKey };
+  if (legacyEndpoint && legacyApiKey)
+    return { endpoint: extractBaseEndpoint(legacyEndpoint), apiKey: legacyApiKey };
 
   const inlineExporterLine = otelBlock
     ? /^\s*exporter\s*=.*otlp-http.*$/m.exec(otelBlock)?.[0]
@@ -70,7 +71,5 @@ export function extractOtelValues(tomlText: string): { endpoint: string; apiKey:
   const apiKey = /^\s*"?x-api-key"?\s*=\s*"([^"]+)"/m.exec(headersBlock)?.[1];
   if (!rawEndpoint || !apiKey) return null;
 
-  const endpoint = rawEndpoint.replace(/\/v1\/logs\/?$/, "");
-
-  return { endpoint, apiKey };
+  return { endpoint: extractBaseEndpoint(rawEndpoint), apiKey };
 }

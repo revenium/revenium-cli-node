@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import chalk from "chalk";
 import ora from "ora";
 import { loadConfig } from "../config/loader.js";
+import { MIDDLEWARE_SOURCE_KEY, MIDDLEWARE_SOURCE_CLI } from "../constants.js";
 import {
   createRateLimiterState,
   enforceRateLimit,
@@ -34,15 +35,19 @@ interface UsageData {
 
 interface JsonlEntry {
   type: string;
+  requestId?: string;
   sessionId?: string;
   timestamp?: string;
   message?: {
+    id?: string;
     model?: string;
     usage?: UsageData;
   };
 }
 
 export interface ParsedRecord {
+  requestId?: string;
+  messageId?: string;
   sessionId: string;
   timestamp: string;
   model: string;
@@ -70,6 +75,41 @@ function generateTransactionId(record: ParsedRecord): string {
   ].join("|");
 
   return createHash("sha256").update(input).digest("hex").substring(0, 32);
+}
+
+function getRecordDedupKey(record: ParsedRecord): string | null {
+  if (!record.requestId || !record.messageId) return null;
+  return [record.requestId, record.messageId].join("|");
+}
+
+export function deduplicateRecords(records: ParsedRecord[]): {
+  records: ParsedRecord[];
+  duplicateCount: number;
+} {
+  const deduped = new Map<string, ParsedRecord>();
+  const passthrough: ParsedRecord[] = [];
+  let duplicateCount = 0;
+
+  for (const record of records) {
+    const key = getRecordDedupKey(record);
+    if (!key) {
+      passthrough.push(record);
+      continue;
+    }
+
+    const existing = deduped.get(key);
+    if (!existing) {
+      deduped.set(key, record);
+      continue;
+    }
+
+    duplicateCount++;
+    if (new Date(record.timestamp).getTime() >= new Date(existing.timestamp).getTime()) {
+      deduped.set(key, record);
+    }
+  }
+
+  return { records: [...passthrough, ...deduped.values()], duplicateCount };
 }
 
 function parseRelativeDate(input: string): Date | null {
@@ -151,7 +191,8 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
   if (entry.type !== "assistant" || !entry.message?.usage) return {};
 
   const usage = entry.message.usage;
-  const { timestamp, sessionId } = entry;
+  const { requestId, timestamp, sessionId } = entry;
+  const messageId = entry.message.id;
   const model = entry.message.model;
 
   if (!timestamp || !sessionId || !model) return { missingFields: true };
@@ -170,6 +211,8 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
 
   return {
     record: {
+      requestId,
+      messageId,
       sessionId,
       timestamp,
       model,
@@ -245,6 +288,13 @@ export function createOtlpPayload(
         },
       ];
 
+      if (record.requestId) {
+        attributes.push({ key: "request_id", value: { stringValue: record.requestId } });
+      }
+      if (record.messageId) {
+        attributes.push({ key: "message.id", value: { stringValue: record.messageId } });
+      }
+
       if (email) {
         attributes.push({ key: "user.email", value: { stringValue: email } });
       }
@@ -255,6 +305,7 @@ export function createOtlpPayload(
 
   const resourceAttributes: Array<{ key: string; value: { stringValue: string } }> = [
     { key: "service.name", value: { stringValue: "claude-code" } },
+    { key: MIDDLEWARE_SOURCE_KEY, value: { stringValue: MIDDLEWARE_SOURCE_CLI } },
   ];
 
   if (organizationName) {
@@ -390,16 +441,22 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     return;
   }
 
-  const sorted = [...allRecords].sort(
+  const { records: backfillRecords, duplicateCount } = deduplicateRecords(allRecords);
+
+  const sorted = [...backfillRecords].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
-  const totalInput = allRecords.reduce((s, r) => s + r.inputTokens, 0);
-  const totalOutput = allRecords.reduce((s, r) => s + r.outputTokens, 0);
-  const totalCacheRead = allRecords.reduce((s, r) => s + r.cacheReadTokens, 0);
-  const totalCacheCreation = allRecords.reduce((s, r) => s + r.cacheCreationTokens, 0);
+  const totalInput = backfillRecords.reduce((s, r) => s + r.inputTokens, 0);
+  const totalOutput = backfillRecords.reduce((s, r) => s + r.outputTokens, 0);
+  const totalCacheRead = backfillRecords.reduce((s, r) => s + r.cacheReadTokens, 0);
+  const totalCacheCreation = backfillRecords.reduce((s, r) => s + r.cacheCreationTokens, 0);
 
   console.log("\n" + chalk.bold("Summary:"));
-  console.log(`  Records:              ${allRecords.length.toLocaleString()}`);
+  console.log(`  Records found:        ${allRecords.length.toLocaleString()}`);
+  console.log(`  Records to backfill:  ${backfillRecords.length.toLocaleString()}`);
+  if (duplicateCount > 0) {
+    console.log(`  Duplicates skipped:   ${duplicateCount.toLocaleString()}`);
+  }
   console.log(
     `  Date range:           ${sorted[0].timestamp.split("T")[0]} to ${sorted[sorted.length - 1].timestamp.split("T")[0]}`,
   );
@@ -413,7 +470,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     return;
   }
 
-  const totalBatches = Math.ceil(allRecords.length / batchSize);
+  const totalBatches = Math.ceil(backfillRecords.length / batchSize);
   const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
   await startupStagger();
   let sentBatches = 0;
@@ -422,9 +479,9 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
   const rateLimiterState = createRateLimiterState();
 
-  for (let i = 0; i < allRecords.length; i += batchSize) {
+  for (let i = 0; i < backfillRecords.length; i += batchSize) {
     const batchNumber = Math.floor(i / batchSize) + 1;
-    const batch = allRecords.slice(i, i + batchSize);
+    const batch = backfillRecords.slice(i, i + batchSize);
     const payload = createOtlpPayload(batch, {
       email: config.email,
       organizationName: config.organizationName,

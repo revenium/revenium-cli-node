@@ -27,6 +27,10 @@ export const SUBSCRIPTION_TIERS = Object.keys(SUBSCRIPTION_TIER_CONFIG) as Reado
 
 export type SubscriptionTier = keyof typeof SUBSCRIPTION_TIER_CONFIG;
 
+// Deployment-channel marker; "revenium-cli" for CLI installs.
+export const MIDDLEWARE_SOURCE_KEY = "revenium.middleware.source";
+export const MIDDLEWARE_SOURCE_CLI = "revenium-cli";
+
 export const ENV_VARS = {
   TELEMETRY_ENABLED: "CLAUDE_CODE_ENABLE_TELEMETRY",
   OTLP_ENDPOINT: "OTEL_EXPORTER_OTLP_ENDPOINT",

@@ -112,6 +112,21 @@ export const RESOURCE_FIELDS: FieldDefinition[] = [
     platforms: ["claude-code", "cursor", "gemini", "copilot"],
     required: false,
   },
+  // Deployment-channel marker: "revenium-cli" (CLI) or "managed-settings" (Anthropic managed settings).
+  {
+    key: "revenium.middleware.source",
+    type: "stringValue",
+    scope: "resource",
+    platforms: ["claude-code"],
+    required: false,
+  },
+  {
+    key: "user.account_uuid",
+    type: "stringValue",
+    scope: "resource",
+    platforms: ["claude-code"],
+    required: false,
+  },
   {
     key: "user.email",
     type: "stringValue",
