@@ -15,6 +15,11 @@ vi.mock("../../../src/_core/api/otlp-client.js", () => ({
   sendOtlpLogs: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/_core/api/resilience.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/_core/api/resilience.js")>();
+  return { ...actual, startupStagger: vi.fn().mockResolvedValue(undefined) };
+});
+
 import {
   parseCompletedEvent,
   parseSessionMeta,
