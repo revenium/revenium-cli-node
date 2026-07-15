@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   createOtlpPayload,
   deduplicateRecords,
+  resolveBackfillEmail,
   type ParsedRecord,
 } from "../../../src/claude-code/commands/backfill.js";
 
@@ -235,5 +236,37 @@ describe("createOtlpPayload — structure", () => {
     const payload = createOtlpPayload([makeRecord({ timestamp })], {});
     const logRecord = payload.resourceLogs[0].scopeLogs[0].logRecords[0];
     expect(logRecord.timeUnixNano).toBe(expectedNano);
+  });
+});
+
+describe("resolveBackfillEmail — precedence (non-interactive branches)", () => {
+  it("uses the --email flag when provided, over the configured email", async () => {
+    expect(await resolveBackfillEmail("flag@example.com", "config@example.com")).toBe(
+      "flag@example.com",
+    );
+  });
+
+  it("falls back to the configured email when no flag is given", async () => {
+    expect(await resolveBackfillEmail(undefined, "config@example.com")).toBe("config@example.com");
+  });
+
+  it("ignores a whitespace --email and falls back to the configured email", async () => {
+    expect(await resolveBackfillEmail("   ", "config@example.com")).toBe("config@example.com");
+  });
+
+  it("returns undefined (unattributed) when no TTY and no email is available", async () => {
+    const orig = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+    try {
+      expect(await resolveBackfillEmail(undefined, undefined)).toBeUndefined();
+    } finally {
+      if (orig) Object.defineProperty(process.stdin, "isTTY", orig);
+    }
+  });
+
+  it("throws when the --email flag is invalid", async () => {
+    await expect(resolveBackfillEmail("not-an-email", undefined)).rejects.toThrow(
+      /Invalid --email/,
+    );
   });
 });

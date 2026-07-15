@@ -1,8 +1,18 @@
 import type { OTLPLogsPayload, OTLPTracesPayload, OTLPResponse } from "../types/index.js";
 import { getFullOtlpEndpoint } from "../config/loader.js";
-import { jitteredBackoff, getMaxRetries, getRequestTimeoutMs } from "./resilience.js";
+import {
+  jitteredBackoff,
+  getMaxRetries,
+  getRequestTimeoutMs,
+  getBackoffMaxMs,
+} from "./resilience.js";
 
-function isRetryableError(error: Error): boolean {
+export interface OtlpSendResult {
+  success: boolean;
+  error?: string;
+}
+
+function isRetryableNetworkError(error: Error): boolean {
   return (
     error.message.includes("ECONNRESET") ||
     error.message.includes("ETIMEDOUT") ||
@@ -23,6 +33,28 @@ function isRetryableStatusCode(status: number): boolean {
   );
 }
 
+function isNonRetryable4xx(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+function parseRetryAfterMs(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const date = Date.parse(header);
+  if (Number.isFinite(date)) {
+    const delayMs = date - Date.now();
+    return delayMs > 0 ? delayMs : 0;
+  }
+
+  return null;
+}
+
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -32,18 +64,15 @@ function sanitizeErrorMessage(message: string, apiKey: string): string {
   return message.replace(new RegExp(escapedKey, "g"), "***");
 }
 
-export async function sendOtlpLogs(
-  baseEndpoint: string,
+async function sendOtlpRequest(
+  url: string,
   apiKey: string,
-  payload: OTLPLogsPayload,
+  payload: OTLPLogsPayload | OTLPTracesPayload,
 ): Promise<OTLPResponse> {
-  const fullEndpoint = getFullOtlpEndpoint(baseEndpoint);
-  const url = `${fullEndpoint}/v1/logs`;
-
   let lastError: Error | null = null;
-
   const maxRetries = getMaxRetries();
   const timeoutMs = getRequestTimeoutMs();
+  const backoffMaxMs = getBackoffMaxMs();
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const controller = new AbortController();
@@ -60,43 +89,48 @@ export async function sendOtlpLogs(
         signal: controller.signal,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
+      if (response.ok) {
+        const result = (await response.json()) as OTLPResponse;
         clearTimeout(timeoutId);
-        const sanitizedError = sanitizeErrorMessage(errorText, apiKey);
-
-        if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
-          lastError = new Error(
-            `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`,
-          );
-          await sleep(jitteredBackoff(attempt));
-          continue;
-        }
-
-        throw new Error(
-          `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`,
-        );
+        return result;
       }
 
-      const result = await response.json();
+      const errorText = await response.text();
       clearTimeout(timeoutId);
-      return result as OTLPResponse;
+      const sanitizedError = sanitizeErrorMessage(errorText, apiKey);
+      const errorMsg = `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`;
+
+      if (isNonRetryable4xx(response.status)) {
+        throw new Error(errorMsg);
+      }
+
+      lastError = new Error(errorMsg);
+
+      if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
+        const backoff = jitteredBackoff(attempt);
+        const retryAfterMs = parseRetryAfterMs(response);
+        const cappedRetryAfter =
+          retryAfterMs !== null ? Math.min(retryAfterMs, backoffMaxMs) : null;
+        const delay = cappedRetryAfter !== null ? Math.max(cappedRetryAfter, backoff) : backoff;
+        await sleep(delay);
+        continue;
+      }
     } catch (error) {
       clearTimeout(timeoutId);
 
       if (error instanceof Error) {
         if (error.name === "AbortError") {
           lastError = new Error(`Request timeout after ${timeoutMs}ms`);
-        } else {
+        } else if (lastError?.message !== error.message) {
           lastError = new Error(sanitizeErrorMessage(error.message, apiKey));
         }
 
-        if (isRetryableError(lastError) && attempt < maxRetries - 1) {
+        if (isRetryableNetworkError(lastError!) && attempt < maxRetries - 1) {
           await sleep(jitteredBackoff(attempt));
           continue;
         }
 
-        throw lastError;
+        throw lastError!;
       }
       throw error;
     }
@@ -105,75 +139,48 @@ export async function sendOtlpLogs(
   throw lastError || new Error("Request failed after retries");
 }
 
+export async function sendOtlpLogs(
+  baseEndpoint: string,
+  apiKey: string,
+  payload: OTLPLogsPayload,
+): Promise<OTLPResponse> {
+  const url = `${getFullOtlpEndpoint(baseEndpoint)}/v1/logs`;
+  return sendOtlpRequest(url, apiKey, payload);
+}
+
 export async function sendOtlpTraces(
   baseEndpoint: string,
   apiKey: string,
   payload: OTLPTracesPayload,
 ): Promise<OTLPResponse> {
-  const fullEndpoint = getFullOtlpEndpoint(baseEndpoint);
-  const url = `${fullEndpoint}/v1/traces`;
+  const url = `${getFullOtlpEndpoint(baseEndpoint)}/v1/traces`;
+  return sendOtlpRequest(url, apiKey, payload);
+}
 
-  let lastError: Error | null = null;
-
-  const maxRetries = getMaxRetries();
-  const timeoutMs = getRequestTimeoutMs();
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        clearTimeout(timeoutId);
-        const sanitizedError = sanitizeErrorMessage(errorText, apiKey);
-
-        if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
-          lastError = new Error(
-            `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`,
-          );
-          await sleep(jitteredBackoff(attempt));
-          continue;
-        }
-
-        throw new Error(
-          `OTLP request failed: ${response.status} ${response.statusText} - ${sanitizedError}`,
-        );
-      }
-
-      const result = await response.json();
-      clearTimeout(timeoutId);
-      return result as OTLPResponse;
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          lastError = new Error(`Request timeout after ${timeoutMs}ms`);
-        } else {
-          lastError = new Error(sanitizeErrorMessage(error.message, apiKey));
-        }
-
-        if (isRetryableError(lastError) && attempt < maxRetries - 1) {
-          await sleep(jitteredBackoff(attempt));
-          continue;
-        }
-
-        throw lastError;
-      }
-      throw error;
-    }
+export async function sendLogsWithResult(
+  endpoint: string,
+  apiKey: string,
+  payload: OTLPLogsPayload,
+): Promise<OtlpSendResult> {
+  try {
+    await sendOtlpLogs(endpoint, apiKey, payload);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    return { success: false, error: errorMsg };
   }
+}
 
-  throw lastError || new Error("Request failed after retries");
+export async function sendTracesWithResult(
+  endpoint: string,
+  apiKey: string,
+  payload: OTLPTracesPayload,
+): Promise<OtlpSendResult> {
+  try {
+    await sendOtlpTraces(endpoint, apiKey, payload);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    return { success: false, error: errorMsg };
+  }
 }

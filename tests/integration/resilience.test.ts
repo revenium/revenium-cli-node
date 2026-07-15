@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { sendOtlpLogs } from "../../src/_core/api/otlp-client.js";
-import { sendBatchWithRetry } from "../../src/_core/api/retry-handler.js";
 import { startupStagger } from "../../src/_core/api/resilience.js";
 import { createTestPayload, generateTestSessionId } from "../../src/_core/api/health-check.js";
 
-function createFailThenSucceedServer(failCount: number, failStatus: number) {
+function createFailThenSucceedServer(
+  failCount: number,
+  failStatus: number,
+  retryAfterSeconds?: number,
+) {
   let requestTimestamps: number[] = [];
   let requestCount = 0;
   let server: Server;
@@ -19,7 +22,11 @@ function createFailThenSucceedServer(failCount: number, failStatus: number) {
       requestCount++;
 
       if (requestCount <= failCount) {
-        res.writeHead(failStatus, { "Content-Type": "application/json" });
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (retryAfterSeconds !== undefined && failStatus === 429) {
+          headers["Retry-After"] = String(retryAfterSeconds);
+        }
+        res.writeHead(failStatus, headers);
         res.end(JSON.stringify({ error: "Service unavailable" }));
         return;
       }
@@ -118,16 +125,14 @@ describe("resilience integration", () => {
 
       expect(delay2).toBeGreaterThanOrEqual(0);
       expect(delay2).toBeLessThan(1200);
-
-      console.log(`  Retry delays: ${delay1}ms, ${delay2}ms (jittered)`);
     });
   });
 
-  describe("retry-handler with jitter against real server", () => {
+  describe("retry-after header obedience", () => {
     let server: ReturnType<typeof createFailThenSucceedServer>;
 
     beforeAll(async () => {
-      server = createFailThenSucceedServer(3, 502);
+      server = createFailThenSucceedServer(1, 429, 1);
       await server.start();
     });
 
@@ -139,21 +144,55 @@ describe("resilience integration", () => {
       server.reset();
     });
 
-    it("sendBatchWithRetry exhausts otlp-client internal retries then retries at wrapper level", async () => {
+    it("waits at least Retry-After seconds before retrying a 429", async () => {
       const payload = createTestPayload(generateTestSessionId(), "test-resilience");
-      const result = await sendBatchWithRetry(server.baseUrl, "test-key", payload, 3, true);
+      const result = await sendOtlpLogs(server.baseUrl, "test-key", payload);
 
-      expect(result.success).toBe(true);
-      expect(result.attempts).toBe(2);
-      expect(server.requestCount).toBeGreaterThan(3);
+      expect(result).toHaveProperty("id");
+      expect(server.requestCount).toBe(2);
 
-      const timestamps = server.requestTimestamps;
-      const delays = timestamps.slice(1).map((t, i) => t - timestamps[i]);
-      const allNonNegative = delays.every((d) => d >= 0);
-      expect(allNonNegative).toBe(true);
+      const [t0, t1] = server.requestTimestamps;
+      const delay = t1 - t0;
 
-      console.log(`  Total requests: ${server.requestCount}`);
-      console.log(`  Retry delays: ${delays.map((d) => `${d}ms`).join(", ")}`);
+      expect(delay).toBeGreaterThanOrEqual(950);
+    });
+  });
+
+  describe("non-retryable 4xx fail-fast", () => {
+    let server: ReturnType<typeof createFailThenSucceedServer>;
+
+    beforeAll(async () => {
+      server = createFailThenSucceedServer(999, 400);
+      await server.start();
+    });
+
+    afterAll(async () => {
+      await server.stop();
+    });
+
+    beforeEach(() => {
+      server.reset();
+    });
+
+    it("does not retry on 400", async () => {
+      const payload = createTestPayload(generateTestSessionId(), "test-resilience");
+
+      await expect(sendOtlpLogs(server.baseUrl, "test-key", payload)).rejects.toThrow("400");
+      expect(server.requestCount).toBe(1);
+    });
+
+    it("does not retry on 401", async () => {
+      server.reset();
+      server.stop();
+
+      const s401 = createFailThenSucceedServer(999, 401);
+      await s401.start();
+
+      const payload = createTestPayload(generateTestSessionId(), "test-resilience");
+      await expect(sendOtlpLogs(s401.baseUrl, "test-key", payload)).rejects.toThrow("401");
+      expect(s401.requestCount).toBe(1);
+
+      await s401.stop();
     });
   });
 
@@ -166,8 +205,6 @@ describe("resilience integration", () => {
 
       expect(elapsed).toBeGreaterThanOrEqual(0);
       expect(elapsed).toBeLessThan(600);
-
-      console.log(`  Stagger delay: ${elapsed}ms`);
     });
 
     it("skips delay when set to zero", async () => {
@@ -177,8 +214,6 @@ describe("resilience integration", () => {
       const elapsed = Date.now() - start;
 
       expect(elapsed).toBeLessThan(50);
-
-      console.log(`  Zero stagger: ${elapsed}ms`);
     });
   });
 
@@ -204,8 +239,6 @@ describe("resilience integration", () => {
 
       await expect(sendOtlpLogs(server.baseUrl, "test-key", payload)).rejects.toThrow("503");
       expect(server.requestCount).toBe(1);
-
-      console.log(`  Requests with MAX_RETRIES=1: ${server.requestCount}`);
     });
 
     it("respects REVENIUM_MAX_RETRIES=2 (two attempts total)", async () => {
@@ -214,8 +247,6 @@ describe("resilience integration", () => {
 
       await expect(sendOtlpLogs(server.baseUrl, "test-key", payload)).rejects.toThrow("503");
       expect(server.requestCount).toBe(2);
-
-      console.log(`  Requests with MAX_RETRIES=2: ${server.requestCount}`);
     });
   });
 });

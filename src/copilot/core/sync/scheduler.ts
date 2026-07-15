@@ -131,7 +131,9 @@ async function sendBatch(
   try {
     await sendOtlpTraces(config.reveniumEndpoint, config.reveniumApiKey, payload);
     return recordCount;
-  } catch {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[copilot] Dropped ${recordCount} event(s) after retry exhaustion: ${msg}`);
     return 0;
   }
 }

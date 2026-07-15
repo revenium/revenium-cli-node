@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import chalk from "chalk";
 import ora from "ora";
+import inquirer from "inquirer";
 import { loadConfig } from "../config/loader.js";
 import { MIDDLEWARE_SOURCE_KEY, MIDDLEWARE_SOURCE_CLI } from "../constants.js";
 import {
@@ -14,8 +15,10 @@ import {
   MAX_BATCH_SIZE,
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
-import { sendBatchWithRetry, MAX_RETRIES } from "../../_core/api/retry-handler.js";
+import { sendLogsWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
+import { validateEmail } from "../../_core/config/validator.js";
+import { maskEmail } from "../../_core/utils/masking.js";
 import type { OTLPLogsPayload } from "../../_core/types/index.js";
 
 export interface BackfillOptions {
@@ -24,6 +27,7 @@ export interface BackfillOptions {
   batchSize?: number;
   delay?: number;
   verbose?: boolean;
+  email?: string;
 }
 
 interface UsageData {
@@ -332,6 +336,52 @@ export function createOtlpPayload(
   };
 }
 
+export async function resolveBackfillEmail(
+  flagEmail: string | undefined,
+  configEmail: string | undefined,
+): Promise<string | undefined> {
+  const trimmedFlagEmail = flagEmail?.trim();
+  if (trimmedFlagEmail) {
+    const result = validateEmail(trimmedFlagEmail);
+    if (!result.valid) {
+      throw new Error(`Invalid --email: ${result.errors.join(", ")}`);
+    }
+    return trimmedFlagEmail;
+  }
+
+  if (configEmail) {
+    return configEmail;
+  }
+
+  if (!process.stdin.isTTY) {
+    console.log(
+      chalk.yellow(
+        "No email configured and no --email provided; backfilled usage will be unattributed.",
+      ),
+    );
+    return undefined;
+  }
+
+  const answers = await inquirer.prompt([
+    {
+      type: "input",
+      name: "email",
+      message: "Email to attribute this historical usage to (leave blank to skip):",
+      validate: (input: string) => {
+        if (!input) return true;
+        const result = validateEmail(input);
+        return result.valid || result.errors.join(", ");
+      },
+    },
+  ]);
+  const trimmed = (answers.email || "").trim();
+  if (!trimmed) {
+    console.log(chalk.yellow("No email entered; backfilled usage will be unattributed."));
+    return undefined;
+  }
+  return trimmed;
+}
+
 export async function backfillCommand(options: BackfillOptions = {}): Promise<void> {
   const {
     since,
@@ -470,6 +520,17 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     return;
   }
 
+  let email: string | undefined;
+  try {
+    email = await resolveBackfillEmail(options.email, config.email);
+  } catch (error) {
+    console.log(chalk.red(error instanceof Error ? error.message : "Invalid --email"));
+    process.exit(1);
+  }
+  if (email) {
+    console.log(chalk.dim(`Attributing backfilled usage to: ${maskEmail(email)}`));
+  }
+
   const totalBatches = Math.ceil(backfillRecords.length / batchSize);
   const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
   await startupStagger();
@@ -483,7 +544,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = backfillRecords.slice(i, i + batchSize);
     const payload = createOtlpPayload(batch, {
-      email: config.email,
+      email,
       organizationName: config.organizationName,
       productName: config.productName,
     });
@@ -491,13 +552,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     await enforceRateLimit(rateLimiterState, { batchSize: batch.length, userDelayMs: delay });
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
-    const result = await sendBatchWithRetry(
-      config.endpoint,
-      config.apiKey,
-      payload,
-      MAX_RETRIES,
-      verbose,
-    );
+    const result = await sendLogsWithResult(config.endpoint, config.apiKey, payload);
 
     if (result.success) {
       sentBatches++;

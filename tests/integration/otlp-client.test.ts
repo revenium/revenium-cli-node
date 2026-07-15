@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { sendOtlpLogs } from "../../src/_core/api/otlp-client.js";
 import { createTestPayload, generateTestSessionId } from "../../src/_core/api/health-check.js";
+import { createOtlpPayload } from "../../src/claude-code/commands/backfill.js";
 import { OTLP_PATH } from "../../src/_core/constants.js";
 import { createOtlpCaptureServer, type OtlpCaptureServer } from "../helpers/otlp-capture-server.js";
 
@@ -61,5 +62,81 @@ describe("OTLP client against capture server", () => {
     expect(response).toHaveProperty("processedEvents");
     expect(response).toHaveProperty("created");
     expect(response.processedEvents).toBe(1);
+  });
+
+  describe("backfill email placement contract with ClaudeCodeMapper", () => {
+    it("claude-code backfill places user.email in log record attributes, not resource attributes", async () => {
+      const payload = createOtlpPayload(
+        [
+          {
+            sessionId: "test-session",
+            timestamp: new Date().toISOString(),
+            model: "claude-sonnet-4-5",
+            inputTokens: 100,
+            outputTokens: 50,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+          },
+        ],
+        { email: "backfill-user@example.com" },
+      );
+
+      await sendOtlpLogs(server.baseUrl, "test-key", payload);
+
+      const captured = server.requests[0].parsedPayload as {
+        resourceLogs: Array<{
+          resource: { attributes: Array<{ key: string; value: { stringValue: string } }> };
+          scopeLogs: Array<{
+            logRecords: Array<{
+              attributes: Array<{ key: string; value: { stringValue: string } }>;
+            }>;
+          }>;
+        }>;
+      };
+
+      const resourceAttrs = captured.resourceLogs[0].resource.attributes;
+      const logRecordAttrs = captured.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+
+      const emailInLogRecord = logRecordAttrs.find((a) => a.key === "user.email");
+      expect(emailInLogRecord).toBeDefined();
+      expect(emailInLogRecord!.value.stringValue).toBe("backfill-user@example.com");
+
+      const emailInResource = resourceAttrs.find((a) => a.key === "user.email");
+      expect(emailInResource).toBeUndefined();
+    });
+
+    it("claude-code backfill omits user.email when no email provided", async () => {
+      const payload = createOtlpPayload(
+        [
+          {
+            sessionId: "test-session-2",
+            timestamp: new Date().toISOString(),
+            model: "claude-sonnet-4-5",
+            inputTokens: 100,
+            outputTokens: 50,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+          },
+        ],
+        {},
+      );
+
+      await sendOtlpLogs(server.baseUrl, "test-key", payload);
+
+      const captured = server.requests[0].parsedPayload as {
+        resourceLogs: Array<{
+          resource: { attributes: Array<{ key: string; value: { stringValue: string } }> };
+          scopeLogs: Array<{
+            logRecords: Array<{
+              attributes: Array<{ key: string; value: { stringValue: string } }>;
+            }>;
+          }>;
+        }>;
+      };
+
+      const logRecordAttrs = captured.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+      const emailInLogRecord = logRecordAttrs.find((a) => a.key === "user.email");
+      expect(emailInLogRecord).toBeUndefined();
+    });
   });
 });

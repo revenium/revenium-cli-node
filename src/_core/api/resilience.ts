@@ -41,9 +41,14 @@ export function getStartupStaggerMs(): number {
   return parseNonNegativeInt("REVENIUM_STARTUP_STAGGER_MS", 5000);
 }
 
+export function getBackoffMaxMs(): number {
+  return parsePositiveInt("REVENIUM_BACKOFF_MAX_MS", 60_000);
+}
+
 export function jitteredBackoff(attempt: number, baseMs?: number): number {
   const base = baseMs ?? getBackoffBaseMs();
-  return base * Math.pow(2, attempt) * Math.random();
+  const maxMs = getBackoffMaxMs();
+  return Math.min(base * Math.pow(2, attempt) * Math.random(), maxMs);
 }
 
 export async function startupStagger(maxMs?: number): Promise<void> {

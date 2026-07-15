@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.8] - 2026-07-15
+
+### Fixed
+
+- Fix codex backfill email placement for subscriber email contract
+- OTLP client: cap Retry-After at backoffMaxMs, 4xx fail-fast, drop warning
+- OTLP client: add Retry-After obedience and remove stale attempts field
+
+### Added
+
+- Subscriber email contract integration tests
+- Backfill email prompt for Claude Code
+
 ## [1.1.7] - 2026-07-01
 
 ### Fixed
@@ -208,6 +221,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.8
 [1.1.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.7
 [1.1.6]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.6
 [1.1.5]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.5

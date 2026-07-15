@@ -64,6 +64,10 @@ program
   .option("--batch-size <n>", "Messages per API batch, max 100 (default: 10)", "10")
   .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
   .option("-v, --verbose", "Show detailed progress")
+  .option(
+    "--email <email>",
+    "Email to attribute backfilled usage to (overrides the configured email; prompted if neither is set)",
+  )
   .action(async (options) => {
     const batchSize = parseInt(options.batchSize, 10);
     if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 100) {
@@ -83,6 +87,7 @@ program
       batchSize,
       delay,
       verbose: options.verbose,
+      email: options.email,
     });
   });
 
