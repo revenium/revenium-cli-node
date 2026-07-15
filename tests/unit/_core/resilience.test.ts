@@ -5,6 +5,7 @@ import {
   getMaxRetries,
   getRequestTimeoutMs,
   getBackoffBaseMs,
+  getBackoffMaxMs,
   getTargetTps,
   getStartupStaggerMs,
 } from "../../../src/_core/api/resilience.js";
@@ -48,6 +49,23 @@ describe("jitteredBackoff", () => {
     expect(result).toBeGreaterThanOrEqual(0);
     expect(result).toBeLessThan(2001);
   });
+
+  it("caps at REVENIUM_BACKOFF_MAX_MS", () => {
+    const original = process.env.REVENIUM_BACKOFF_MAX_MS;
+    process.env.REVENIUM_BACKOFF_MAX_MS = "500";
+    try {
+      for (let i = 0; i < 100; i++) {
+        const result = jitteredBackoff(10, 1000);
+        expect(result).toBeLessThanOrEqual(500);
+      }
+    } finally {
+      if (original !== undefined) {
+        process.env.REVENIUM_BACKOFF_MAX_MS = original;
+      } else {
+        delete process.env.REVENIUM_BACKOFF_MAX_MS;
+      }
+    }
+  });
 });
 
 describe("startupStagger", () => {
@@ -88,12 +106,14 @@ describe("env var getters", () => {
     delete process.env.REVENIUM_MAX_RETRIES;
     delete process.env.REVENIUM_REQUEST_TIMEOUT_MS;
     delete process.env.REVENIUM_BACKOFF_BASE_MS;
+    delete process.env.REVENIUM_BACKOFF_MAX_MS;
     delete process.env.REVENIUM_TARGET_TPS;
     delete process.env.REVENIUM_STARTUP_STAGGER_MS;
 
     expect(getMaxRetries()).toBe(3);
     expect(getRequestTimeoutMs()).toBe(30_000);
     expect(getBackoffBaseMs()).toBe(1000);
+    expect(getBackoffMaxMs()).toBe(60_000);
     expect(getTargetTps()).toBe(25);
     expect(getStartupStaggerMs()).toBe(5000);
   });

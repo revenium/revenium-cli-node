@@ -386,12 +386,15 @@ function createPayload(
     }
   }
 
+  const subscriberEmail = sharedResourceAttributes.find((a) => a.key === "user.email");
+  const resourceAttrsWithoutEmail = sharedResourceAttributes.filter((a) => a.key !== "user.email");
+
   return {
     resourceLogs: Array.from(eventsByServiceName, ([serviceName, events]) => ({
       resource: {
         attributes: [
           { key: "service.name", value: { stringValue: serviceName } },
-          ...sharedResourceAttributes,
+          ...resourceAttrsWithoutEmail,
         ],
       },
       scopeLogs: [
@@ -413,6 +416,7 @@ function createPayload(
               { key: "reasoning_token_count", value: { intValue: event.reasoning } },
               { key: "tool_token_count", value: { intValue: event.toolTokens } },
               { key: "duration_ms", value: { intValue: 0 } },
+              ...(subscriberEmail ? [subscriberEmail] : []),
             ],
           })),
         },

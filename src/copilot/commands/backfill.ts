@@ -10,7 +10,7 @@ import {
   MAX_BATCH_SIZE,
   DEFAULT_BATCH_SIZE,
 } from "../../_core/api/rate-limiter.js";
-import { sendTraceBatchWithRetry, MAX_RETRIES } from "../../_core/api/retry-handler.js";
+import { sendTracesWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
 import type { CopilotUsageDay } from "../types.js";
 
@@ -244,12 +244,10 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     await enforceRateLimit(rateLimiterState, { batchSize: batchRecordCount, userDelayMs: delay });
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
-    const result = await sendTraceBatchWithRetry(
+    const result = await sendTracesWithResult(
       config.reveniumEndpoint,
       config.reveniumApiKey,
       payload,
-      MAX_RETRIES,
-      verbose,
     );
 
     if (result.success) {

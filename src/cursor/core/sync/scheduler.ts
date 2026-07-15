@@ -105,7 +105,9 @@ async function sendBatch(events: CursorUsageEvent[], config: CursorConfig): Prom
   try {
     await sendOtlpLogs(config.reveniumEndpoint, config.reveniumApiKey, payload);
     return events.length;
-  } catch {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[cursor] Dropped ${events.length} event(s) after retry exhaustion: ${msg}`);
     return 0;
   }
 }

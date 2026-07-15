@@ -855,7 +855,9 @@ describe("backfillAction — date filtering and dry-run", () => {
 
     const payload = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2];
     const resourceAttrs = payload.resourceLogs[0].resource!.attributes!;
-    expect(resourceAttrs.find((a) => a.key === "user.email")?.value.stringValue).toBe(
+    const logRecordAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes!;
+    expect(resourceAttrs.find((a) => a.key === "user.email")).toBeUndefined();
+    expect(logRecordAttrs.find((a) => a.key === "user.email")?.value.stringValue).toBe(
       "daithi@example.com",
     );
     expect(resourceAttrs.find((a) => a.key === "organization.name")?.value.stringValue).toBe(
@@ -892,7 +894,9 @@ describe("backfillAction — date filtering and dry-run", () => {
 
     const payload = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2];
     const resourceAttrs = payload.resourceLogs[0].resource!.attributes!;
-    expect(resourceAttrs.find((a) => a.key === "user.email")?.value.stringValue).toBe(
+    const logRecordAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes!;
+    expect(resourceAttrs.find((a) => a.key === "user.email")).toBeUndefined();
+    expect(logRecordAttrs.find((a) => a.key === "user.email")?.value.stringValue).toBe(
       "fallback@example.com",
     );
     expect(resourceAttrs.find((a) => a.key === "organization.name")?.value.stringValue).toBe(
