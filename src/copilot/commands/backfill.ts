@@ -4,12 +4,7 @@ import { loadConfig, configExists } from "../config/loader.js";
 import { fetchUsageDays } from "../core/github-client.js";
 import { buildOtlpPayload, isValidDay } from "../core/transform/otlp-mapper.js";
 import { computeBreakdownHash, Deduplicator } from "../core/sync/deduplicator.js";
-import {
-  createRateLimiterState,
-  enforceRateLimit,
-  MAX_BATCH_SIZE,
-  DEFAULT_BATCH_SIZE,
-} from "../../_core/api/rate-limiter.js";
+import { MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE } from "../../_core/api/rate-limiter.js";
 import { sendTracesWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
 import type { CopilotUsageDay } from "../types.js";
@@ -233,21 +228,19 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   let sentRecords = 0;
   let permanentlyFailedBatches = 0;
   const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
-  const rateLimiterState = createRateLimiterState();
-
   for (let i = 0; i < uniqueDays.length; i += batchSize) {
     const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = uniqueDays.slice(i, i + batchSize);
     const payload = buildOtlpPayload(batch, config);
     const batchRecordCount = batch.reduce((sum, d) => sum + d.breakdown.length, 0);
 
-    await enforceRateLimit(rateLimiterState, { batchSize: batchRecordCount, userDelayMs: delay });
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
     const result = await sendTracesWithResult(
       config.reveniumEndpoint,
       config.reveniumApiKey,
       payload,
+      { batchSize: batchRecordCount, userDelayMs: delay },
     );
 
     if (result.success) {

@@ -1,15 +1,10 @@
 import chalk from "chalk";
 import ora from "ora";
 import { loadConfig, configExists } from "../config/loader.js";
-import { fetchEvents } from "../core/cursor-client.js";
+import { fetchEvents, getCursorMinRequestIntervalMs } from "../core/cursor-client.js";
 import { buildOtlpPayload, isValidTimestamp } from "../core/transform/otlp-mapper.js";
 import { computeEventHash, Deduplicator } from "../core/sync/deduplicator.js";
-import {
-  createRateLimiterState,
-  enforceRateLimit,
-  MAX_BATCH_SIZE,
-  DEFAULT_BATCH_SIZE,
-} from "../../_core/api/rate-limiter.js";
+import { MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE } from "../../_core/api/rate-limiter.js";
 import { sendLogsWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
 import type { CursorUsageEvent } from "../types.js";
@@ -20,6 +15,7 @@ export interface BackfillOptions {
   dryRun?: boolean;
   batchSize?: number;
   delay?: number;
+  fetchDelay?: number;
   verbose?: boolean;
 }
 
@@ -69,6 +65,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     dryRun = false,
     batchSize: rawBatchSize = DEFAULT_BATCH_SIZE,
     delay = 0,
+    fetchDelay,
     verbose = false,
   } = options;
 
@@ -131,11 +128,25 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     toMs = Date.now();
   }
 
+  const fetchIntervalMs = fetchDelay ?? getCursorMinRequestIntervalMs();
+  if (fetchIntervalMs <= 0) {
+    console.log(chalk.dim("Cursor API fetch pacing disabled (--fetch-delay 0). Risk of 429s.\n"));
+  } else {
+    console.log(
+      chalk.dim(
+        `Pacing Cursor API requests to ~${(60000 / fetchIntervalMs).toFixed(1)} req/min ` +
+          `(min ${fetchIntervalMs}ms between requests) to respect Cursor's rate limits.\n`,
+      ),
+    );
+  }
+
   const fetchSpinner = ora("Fetching historical events from Cursor API...").start();
   const allEvents: CursorUsageEvent[] = [];
 
   try {
-    for await (const batch of fetchEvents(config.cursorApiKey, fromMs, toMs)) {
+    for await (const batch of fetchEvents(config.cursorApiKey, fromMs, toMs, {
+      minRequestIntervalMs: fetchDelay,
+    })) {
       allEvents.push(...batch);
       fetchSpinner.text = `Fetching events... (${allEvents.length} so far)`;
     }
@@ -233,20 +244,18 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   let sentRecords = 0;
   let permanentlyFailedBatches = 0;
   const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
-  const rateLimiterState = createRateLimiterState();
-
   for (let i = 0; i < sendableEvents.length; i += batchSize) {
     const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = sendableEvents.slice(i, i + batchSize);
     const payload = buildOtlpPayload(batch, config);
 
-    await enforceRateLimit(rateLimiterState, { batchSize: batch.length, userDelayMs: delay });
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
     const result = await sendLogsWithResult(
       config.reveniumEndpoint,
       config.reveniumApiKey,
       payload,
+      { batchSize: batch.length, userDelayMs: delay },
     );
 
     if (result.success) {

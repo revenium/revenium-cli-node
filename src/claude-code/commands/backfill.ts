@@ -9,12 +9,7 @@ import ora from "ora";
 import inquirer from "inquirer";
 import { loadConfig } from "../config/loader.js";
 import { MIDDLEWARE_SOURCE_KEY, MIDDLEWARE_SOURCE_CLI } from "../constants.js";
-import {
-  createRateLimiterState,
-  enforceRateLimit,
-  MAX_BATCH_SIZE,
-  DEFAULT_BATCH_SIZE,
-} from "../../_core/api/rate-limiter.js";
+import { MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE } from "../../_core/api/rate-limiter.js";
 import { sendLogsWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
 import { validateEmail } from "../../_core/config/validator.js";
@@ -538,8 +533,6 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   let sentRecords = 0;
   let permanentlyFailedBatches = 0;
   const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
-  const rateLimiterState = createRateLimiterState();
-
   for (let i = 0; i < backfillRecords.length; i += batchSize) {
     const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = backfillRecords.slice(i, i + batchSize);
@@ -549,10 +542,12 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
       productName: config.productName,
     });
 
-    await enforceRateLimit(rateLimiterState, { batchSize: batch.length, userDelayMs: delay });
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
 
-    const result = await sendLogsWithResult(config.endpoint, config.apiKey, payload);
+    const result = await sendLogsWithResult(config.endpoint, config.apiKey, payload, {
+      batchSize: batch.length,
+      userDelayMs: delay,
+    });
 
     if (result.success) {
       sentBatches++;

@@ -93,7 +93,15 @@ program
   .option("--to <date>", "End date (ISO 8601, defaults to now)")
   .option("--dry-run", "Preview without sending data")
   .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
-  .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
+  .option(
+    "--delay <ms>",
+    "Minimum delay between Revenium send batches in milliseconds (default: 0)",
+    "0",
+  )
+  .option(
+    "--fetch-delay <ms>",
+    "Minimum delay between Cursor API fetch requests in milliseconds (default: 7500, ~8 req/min)",
+  )
   .option("-v, --verbose", "Show detailed output")
   .action(async (options) => {
     const batchSize = parseInt(options.batchSize, 10);
@@ -112,12 +120,27 @@ program
       console.warn("Warning: large delay values will significantly increase backfill time");
     }
 
+    let fetchDelay: number | undefined;
+    if (options.fetchDelay !== undefined) {
+      fetchDelay = parseInt(options.fetchDelay, 10);
+      if (!Number.isFinite(fetchDelay) || fetchDelay < 0 || fetchDelay > 600000) {
+        console.error("Error: --fetch-delay must be between 0 and 600000 milliseconds");
+        process.exit(1);
+      }
+      if (fetchDelay === 0) {
+        console.warn(
+          "Warning: --fetch-delay 0 disables Cursor API pacing and may trigger rate limits (429)",
+        );
+      }
+    }
+
     await backfillCommand({
       since: options.since,
       to: options.to,
       dryRun: options.dryRun,
       batchSize,
       delay,
+      fetchDelay,
       verbose: options.verbose,
     });
   });
