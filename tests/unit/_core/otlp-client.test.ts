@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { sendOtlpLogs } from "../../../src/_core/api/otlp-client.js";
+
+vi.mock("../../../src/_core/api/rate-limiter.js", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    enforceRateLimit: vi.fn().mockResolvedValue(undefined),
+    createRateLimiterState: actual.createRateLimiterState,
+  };
+});
+
+import { sendOtlpLogs, sendOtlpTraces } from "../../../src/_core/api/otlp-client.js";
+import { enforceRateLimit } from "../../../src/_core/api/rate-limiter.js";
 import type { OTLPLogsPayload } from "../../../src/_core/types/index.js";
 
 const mockPayload: OTLPLogsPayload = {
@@ -242,5 +253,54 @@ describe("sendOtlpLogs", () => {
       const elapsed = Date.now() - startTime;
       expect(elapsed).toBeGreaterThanOrEqual(1900);
     });
+  });
+});
+
+describe("global rate limiting", () => {
+  const enforceRateLimitMock = enforceRateLimit as ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    enforceRateLimitMock.mockClear();
+  });
+
+  it("enforces rate limit on sendOtlpLogs with default batchSize", async () => {
+    mockFetchOk();
+    await sendOtlpLogs("https://api.revenium.ai", apiKey, mockPayload);
+    expect(enforceRateLimitMock).toHaveBeenCalledWith(
+      expect.objectContaining({ nextAvailableTimeMs: expect.any(Number) }),
+      expect.objectContaining({ batchSize: 1 }),
+    );
+  });
+
+  it("forwards batchSize option to rate limiter", async () => {
+    mockFetchOk();
+    await sendOtlpLogs("https://api.revenium.ai", apiKey, mockPayload, { batchSize: 50 });
+    expect(enforceRateLimitMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ batchSize: 50 }),
+    );
+  });
+
+  it("forwards userDelayMs option to rate limiter", async () => {
+    mockFetchOk();
+    await sendOtlpLogs("https://api.revenium.ai", apiKey, mockPayload, {
+      batchSize: 10,
+      userDelayMs: 500,
+    });
+    expect(enforceRateLimitMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ batchSize: 10, userDelayMs: 500 }),
+    );
+  });
+
+  it("enforces rate limit on sendOtlpTraces", async () => {
+    mockFetchOk();
+    await sendOtlpTraces("https://api.revenium.ai", apiKey, mockPayload as any, {
+      batchSize: 25,
+    });
+    expect(enforceRateLimitMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ batchSize: 25 }),
+    );
   });
 });

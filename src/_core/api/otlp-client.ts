@@ -5,70 +5,47 @@ import {
   getMaxRetries,
   getRequestTimeoutMs,
   getBackoffMaxMs,
+  sleep,
+  isRetryableStatusCode,
+  isNonRetryable4xx,
+  isRetryableNetworkError,
+  parseRetryAfterMs,
+  sanitizeErrorMessage,
 } from "./resilience.js";
+import { createRateLimiterState, enforceRateLimit } from "./rate-limiter.js";
+import type { RateLimiterState } from "./rate-limiter.js";
 
 export interface OtlpSendResult {
   success: boolean;
   error?: string;
 }
 
-function isRetryableNetworkError(error: Error): boolean {
-  return (
-    error.message.includes("ECONNRESET") ||
-    error.message.includes("ETIMEDOUT") ||
-    error.message.includes("ENOTFOUND") ||
-    error.message.includes("network") ||
-    error.message.includes("timeout")
-  );
+export interface OtlpSendOptions {
+  batchSize?: number;
+  userDelayMs?: number;
 }
 
-function isRetryableStatusCode(status: number): boolean {
-  return (
-    status === 408 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
-}
+let globalRateLimiterState: RateLimiterState | null = null;
 
-function isNonRetryable4xx(status: number): boolean {
-  return status >= 400 && status < 500 && status !== 408 && status !== 429;
-}
-
-function parseRetryAfterMs(response: Response): number | null {
-  const header = response.headers.get("retry-after");
-  if (!header) return null;
-
-  const seconds = Number(header);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return seconds * 1000;
+function getGlobalRateLimiterState(): RateLimiterState {
+  if (!globalRateLimiterState) {
+    globalRateLimiterState = createRateLimiterState();
   }
-
-  const date = Date.parse(header);
-  if (Number.isFinite(date)) {
-    const delayMs = date - Date.now();
-    return delayMs > 0 ? delayMs : 0;
-  }
-
-  return null;
-}
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function sanitizeErrorMessage(message: string, apiKey: string): string {
-  const escapedKey = apiKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return message.replace(new RegExp(escapedKey, "g"), "***");
+  return globalRateLimiterState;
 }
 
 async function sendOtlpRequest(
   url: string,
   apiKey: string,
   payload: OTLPLogsPayload | OTLPTracesPayload,
+  options?: OtlpSendOptions,
 ): Promise<OTLPResponse> {
+  const state = getGlobalRateLimiterState();
+  await enforceRateLimit(state, {
+    batchSize: options?.batchSize ?? 1,
+    userDelayMs: options?.userDelayMs,
+  });
+
   let lastError: Error | null = null;
   const maxRetries = getMaxRetries();
   const timeoutMs = getRequestTimeoutMs();
@@ -143,27 +120,30 @@ export async function sendOtlpLogs(
   baseEndpoint: string,
   apiKey: string,
   payload: OTLPLogsPayload,
+  options?: OtlpSendOptions,
 ): Promise<OTLPResponse> {
   const url = `${getFullOtlpEndpoint(baseEndpoint)}/v1/logs`;
-  return sendOtlpRequest(url, apiKey, payload);
+  return sendOtlpRequest(url, apiKey, payload, options);
 }
 
 export async function sendOtlpTraces(
   baseEndpoint: string,
   apiKey: string,
   payload: OTLPTracesPayload,
+  options?: OtlpSendOptions,
 ): Promise<OTLPResponse> {
   const url = `${getFullOtlpEndpoint(baseEndpoint)}/v1/traces`;
-  return sendOtlpRequest(url, apiKey, payload);
+  return sendOtlpRequest(url, apiKey, payload, options);
 }
 
 export async function sendLogsWithResult(
   endpoint: string,
   apiKey: string,
   payload: OTLPLogsPayload,
+  options?: OtlpSendOptions,
 ): Promise<OtlpSendResult> {
   try {
-    await sendOtlpLogs(endpoint, apiKey, payload);
+    await sendOtlpLogs(endpoint, apiKey, payload, options);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
@@ -175,9 +155,10 @@ export async function sendTracesWithResult(
   endpoint: string,
   apiKey: string,
   payload: OTLPTracesPayload,
+  options?: OtlpSendOptions,
 ): Promise<OtlpSendResult> {
   try {
-    await sendOtlpTraces(endpoint, apiKey, payload);
+    await sendOtlpTraces(endpoint, apiKey, payload, options);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";

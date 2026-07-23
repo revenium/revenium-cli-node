@@ -588,6 +588,7 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
         otelValues.endpoint,
         otelValues.apiKey,
         createPayload(batch, resourceAttributes),
+        { batchSize: batch.length },
       );
       sent += batch.length;
       spinner.text = `Sending backfill payloads... (${sent}/${backfillEvents.length})`;

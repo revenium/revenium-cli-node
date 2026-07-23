@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.1.9] - 2026-07-23
+
+### Fixed
+
+- Global rate limiter: move `enforceRateLimit` into `sendOtlpRequest` so all providers (Claude Code, Cursor, Copilot, Codex) get automatic pacing without manual wiring
+- Cursor `backfill` now paces its Cursor Admin API fetches (default ~8 req/min, under Cursor's documented 60 req/min limit for `/teams/filtered-usage-events`) so historical pulls no longer trip Cursor's rate limiter (429). Tunable via `--fetch-delay <ms>` or `CURSOR_MIN_REQUEST_INTERVAL_MS` (BACK-2319)
+- Cursor fetch client now uses jittered exponential backoff and honors the `Retry-After` header defensively on retryable responses, matching the Revenium send path
+
 ## [1.1.8] - 2026-07-15
 
 ### Fixed
@@ -221,6 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.9]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.9
 [1.1.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.8
 [1.1.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.7
 [1.1.6]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.6

@@ -406,14 +406,22 @@ Clears sync state for a fresh sync. Displays current state before resetting.
 
 Imports historical Cursor usage data.
 
-| Option             | Description                                      |
-| ------------------ | ------------------------------------------------ |
-| `--since <date>`   | Import since date                                |
-| `--to <date>`      | Import until date                                |
-| `--dry-run`        | Preview without sending                          |
-| `--batch-size <n>` | Records per batch, max 100 (default: 10)         |
-| `--delay <ms>`     | Minimum delay between batches in ms (default: 0) |
-| `--verbose`        | Show per-record details                          |
+| Option              | Description                                                             |
+| ------------------- | ---------------------------------------------------------------------- |
+| `--since <date>`    | Import since date                                                      |
+| `--to <date>`       | Import until date                                                      |
+| `--dry-run`         | Preview without sending                                                |
+| `--batch-size <n>`  | Records per batch, max 100 (default: 10)                               |
+| `--delay <ms>`      | Minimum delay between Revenium send batches in ms (default: 0)         |
+| `--fetch-delay <ms>`| Minimum delay between Cursor API fetch requests in ms (default: 7500)  |
+| `--verbose`         | Show per-record details                                                |
+
+Cursor's Admin API rate-limits `/teams/filtered-usage-events` to **60 requests per
+minute per team**. By default `backfill` paces its fetches to ~8 requests/min (one
+every 7.5s), well under that ceiling, so no flags are needed to avoid the rate
+limiter. Override the pacing with `--fetch-delay <ms>` or the
+`CURSOR_MIN_REQUEST_INTERVAL_MS` environment variable (e.g. `2000` for ~30 req/min
+if you have headroom). `--fetch-delay 0` disables pacing entirely (not recommended).
 
 ### GitHub Copilot (`revenium-copilot`)
 
