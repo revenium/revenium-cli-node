@@ -96,6 +96,35 @@ describe("parseCompletedEvent", () => {
     });
     expect(parseCompletedEvent(line)).toBeNull();
   });
+
+  it("sets dedupeKey using turnId from context when available", () => {
+    const line = JSON.stringify({
+      type: "response.completed",
+      session_id: "session-abc",
+      resolvedTimestampNanos: "1700000000000000000",
+      data: { response: { model: "gpt-5", usage: {} } },
+    });
+    const ctx: RolloutContext = {
+      sessionId: "session-abc",
+      model: "gpt-5",
+      serviceName: "codex_cli_rs",
+      turnId: "turn-42",
+    };
+    const result = parseCompletedEvent(line, ctx);
+    expect(result!.dedupeKey).toBe("codex-turn|codex_cli_rs|session-abc|gpt-5|turn-42");
+  });
+
+  it("sets timestamp-based dedupeKey without turnId context", () => {
+    const line = JSON.stringify({
+      type: "response.completed",
+      session_id: "session-abc",
+      resolvedTimestampNanos: "1700000000000000000",
+      data: { response: { model: "gpt-5", usage: {} } },
+    });
+    const result = parseCompletedEvent(line);
+    expect(result!.dedupeKey).toContain("codex-completed-value");
+    expect(result!.dedupeKey).toContain("1700000000000000000");
+  });
 });
 
 describe("parseSessionMeta (Codex CLI v0.128.0)", () => {
@@ -347,12 +376,12 @@ describe("hashTransactionId", () => {
     const a = hashTransactionId({
       ...sampleEvent,
       resolvedTimestampNanos: "1700000000000000000",
-      dedupeKey: "codex-token-count-turn|session-1|turn-1",
+      dedupeKey: "codex-turn|codex_cli_rs|session-1|gpt-5|turn-1",
     });
     const b = hashTransactionId({
       ...sampleEvent,
       resolvedTimestampNanos: "1700000001000000000",
-      dedupeKey: "codex-token-count-turn|session-1|turn-1",
+      dedupeKey: "codex-turn|codex_cli_rs|session-1|gpt-5|turn-1",
     });
 
     expect(a).not.toBe(b);
@@ -370,25 +399,28 @@ describe("deduplicateCodexEvents", () => {
     cached: 10,
     reasoning: 5,
     toolTokens: 0,
-    dedupeKey: "codex-token-count-turn|session-1|turn-1",
+    dedupeKey: "codex-turn|codex_cli_rs|session-1|gpt-5|turn-1",
   };
 
-  it("keeps the latest growing token_count snapshot for the same turn", () => {
-    const latest = {
+  it("merges per-category max values from duplicate events for the same turn", () => {
+    const later = {
       ...baseEvent,
       resolvedTimestampNanos: "1700000001000000000",
-      outputs: 55,
       inputs: 150,
-      cached: 20,
+      outputs: 30,
+      cached: 5,
+      reasoning: 15,
     };
 
-    const result = deduplicateCodexEvents([baseEvent, latest]);
+    const result = deduplicateCodexEvents([baseEvent, later]);
 
     expect(result.duplicateCount).toBe(1);
     expect(result.events).toHaveLength(1);
-    expect(result.events[0].resolvedTimestampNanos).toBe("1700000001000000000");
-    expect(result.events[0].outputs).toBe(55);
     expect(result.events[0].inputs).toBe(150);
+    expect(result.events[0].outputs).toBe(50);
+    expect(result.events[0].cached).toBe(10);
+    expect(result.events[0].reasoning).toBe(15);
+    expect(result.events[0].resolvedTimestampNanos).toBe("1700000001000000000");
   });
 
   it("does not collapse legacy events without a dedupeKey", () => {
@@ -671,7 +703,7 @@ describe("backfillAction — date filtering and dry-run", () => {
     );
   });
 
-  it("clears turn context after response.completed before later token_count rows", async () => {
+  it("deduplicates response.completed with token_count from the same turn, keeping the richer record", async () => {
     const now = Date.now() - 24 * 60 * 60 * 1000;
     const firstTurn = makeRolloutBody(now, "stale-turn-session");
     const completed = makeCompletedLine(now + 500, "stale-turn-session");
@@ -695,7 +727,17 @@ describe("backfillAction — date filtering and dry-run", () => {
       resourceLog.scopeLogs.flatMap((scopeLog) => scopeLog.logRecords),
     );
 
-    expect(records).toHaveLength(3);
+    expect(records).toHaveLength(2);
+
+    const turnRecord = records.find(
+      (r) => r.attributes.find((a) => a.key === "input_token_count")?.value.intValue === 100,
+    );
+    expect(turnRecord).toBeDefined();
+
+    const completedRecord = records.find(
+      (r) => r.attributes.find((a) => a.key === "input_token_count")?.value.intValue === 10,
+    );
+    expect(completedRecord).toBeUndefined();
   });
 
   it("does not send when all events are outside the window", async () => {

@@ -90,6 +90,15 @@ function toUnixNanos(value: string | number | undefined): string | null {
   return (BigInt(parsed.getTime()) * BigInt(1_000_000)).toString();
 }
 
+function buildTurnDedupeKey(
+  serviceName: string,
+  sessionId: string,
+  model: string,
+  turnId: string,
+): string {
+  return ["codex-turn", serviceName, sessionId, model, turnId].join("|");
+}
+
 export function hashTransactionId(event: ParsedCodexEvent): string {
   const input = [
     event.sessionId,
@@ -125,9 +134,18 @@ export function deduplicateCodexEvents(events: ParsedCodexEvent[]): {
     }
 
     duplicateCount++;
-    if (BigInt(event.resolvedTimestampNanos) >= BigInt(existing.resolvedTimestampNanos)) {
-      deduped.set(event.dedupeKey, event);
-    }
+    deduped.set(event.dedupeKey, {
+      ...existing,
+      inputs: Math.max(existing.inputs, event.inputs),
+      outputs: Math.max(existing.outputs, event.outputs),
+      cached: Math.max(existing.cached, event.cached),
+      reasoning: Math.max(existing.reasoning, event.reasoning),
+      toolTokens: Math.max(existing.toolTokens, event.toolTokens),
+      resolvedTimestampNanos:
+        BigInt(event.resolvedTimestampNanos) >= BigInt(existing.resolvedTimestampNanos)
+          ? event.resolvedTimestampNanos
+          : existing.resolvedTimestampNanos,
+    });
   }
 
   return { events: [...passthrough, ...deduped.values()], duplicateCount };
@@ -255,16 +273,13 @@ export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedC
     reasoning: usage.reasoning_output_tokens ?? 0,
     toolTokens: 0,
     dedupeKey: ctx.turnId
-      ? [
-          "codex-token-count-turn",
+      ? buildTurnDedupeKey(
           ctx.serviceName || CODEX_EXEC_SERVICE_NAME,
           ctx.sessionId,
           model,
           ctx.turnId,
-        ].join("|")
-      : // Older rollout rows may not have turn_id. Cumulative total_token_usage
-        // advances for distinct billable calls, while repeated snapshots retain it.
-        [
+        )
+      : [
           "codex-token-count-value",
           ctx.serviceName || CODEX_EXEC_SERVICE_NAME,
           ctx.sessionId,
@@ -275,7 +290,7 @@ export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedC
   };
 }
 
-export function parseCompletedEvent(line: string): ParsedCodexEvent | null {
+export function parseCompletedEvent(line: string, ctx?: RolloutContext): ParsedCodexEvent | null {
   const parsed = JSON.parse(line) as {
     type?: string;
     event?: string;
@@ -318,15 +333,18 @@ export function parseCompletedEvent(line: string): ParsedCodexEvent | null {
   if (!isCompleted) return null;
 
   const usage = parsed.data?.response?.usage ?? parsed.data?.usage ?? parsed.usage ?? {};
-  const model = parsed.data?.response?.model ?? parsed.data?.model ?? parsed.model ?? "unknown";
+  const model =
+    parsed.data?.response?.model ?? parsed.data?.model ?? parsed.model ?? ctx?.model ?? "unknown";
   const sessionId = parsed.session_id ?? parsed.sessionId ?? "unknown-session";
   const resolvedTimestampNanos =
     parsed.resolvedTimestampNanos ?? toUnixNanos(parsed.data?.timestamp ?? parsed.timestamp);
   if (!resolvedTimestampNanos) return null;
 
+  const serviceName = ctx?.serviceName || CODEX_EXEC_SERVICE_NAME;
+
   return {
     sessionId,
-    serviceName: CODEX_EXEC_SERVICE_NAME,
+    serviceName,
     resolvedTimestampNanos,
     model,
     inputs: usage.input_tokens ?? 0,
@@ -334,6 +352,9 @@ export function parseCompletedEvent(line: string): ParsedCodexEvent | null {
     cached: usage.cache_read_tokens ?? 0,
     reasoning: usage.reasoning_tokens ?? 0,
     toolTokens: usage.tool_token_count ?? 0,
+    dedupeKey: ctx?.turnId
+      ? buildTurnDedupeKey(serviceName, ctx.sessionId, model, ctx.turnId)
+      : ["codex-completed-value", serviceName, sessionId, resolvedTimestampNanos].join("|"),
   };
 }
 
@@ -520,7 +541,7 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
           continue;
         }
         const tokenCountEvent = parseTokenCountEvent(line, ctx);
-        const completedEvent = tokenCountEvent ? null : parseCompletedEvent(line);
+        const completedEvent = tokenCountEvent ? null : parseCompletedEvent(line, ctx);
         if (completedEvent) {
           ctx.turnId = undefined;
         }

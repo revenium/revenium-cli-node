@@ -1,6 +1,7 @@
 import type { OTLPLogsPayload } from "../../../_core/types/index.js";
 import type { CursorUsageEvent, CursorConfig } from "../../types.js";
 import { SERVICE_NAME, SCOPE_NAME } from "../../constants.js";
+import { computeEventHash } from "../sync/deduplicator.js";
 
 export function isValidTimestamp(ts: unknown): ts is number {
   return typeof ts === "number" && Number.isFinite(ts) && Number.isInteger(ts) && ts > 0;
@@ -11,7 +12,10 @@ function mapEventToLogRecord(
 ): OTLPLogsPayload["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0] {
   const timeUnixNano = (BigInt(event.timestamp) * 1_000_000n).toString();
 
+  const transactionId = computeEventHash(event).substring(0, 32);
+
   const attributes: Array<{ key: string; value: { stringValue: string } }> = [
+    { key: "transaction_id", value: { stringValue: transactionId } },
     { key: "model", value: { stringValue: event.model } },
     {
       key: "input_tokens",

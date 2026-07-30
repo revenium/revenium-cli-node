@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-07-30
+
+### Fixed
+
+- Backfill deduplication: merge per-category max tokens instead of selecting by aggregate, prefer richer records, align model fallback
+
+### Added
+
+- Emit skill and tool details in Claude Code backfill OTLP logs
+
 ## [1.1.9] - 2026-07-23
 
 ### Fixed
@@ -231,6 +241,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.10]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.10
 [1.1.9]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.9
 [1.1.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.8
 [1.1.7]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.7
