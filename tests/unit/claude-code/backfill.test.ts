@@ -270,3 +270,78 @@ describe("resolveBackfillEmail — precedence (non-interactive branches)", () =>
     );
   });
 });
+
+describe("createOtlpPayload — skill and tool attributes", () => {
+  function getLogAttrs(payload: ReturnType<typeof createOtlpPayload>, index = 0) {
+    return payload.resourceLogs[0].scopeLogs[0].logRecords[index].attributes;
+  }
+
+  function findAttr(attrs: Array<{ key: string; value: { stringValue: string } }>, key: string) {
+    return attrs.find((a) => a.key === key);
+  }
+
+  it("emits stop_reason when present", () => {
+    const payload = createOtlpPayload([makeRecord({ stopReason: "end_turn" })], {});
+    const attrs = getLogAttrs(payload);
+    expect(findAttr(attrs, "stop_reason")?.value.stringValue).toBe("end_turn");
+  });
+
+  it("does not emit stop_reason when absent", () => {
+    const payload = createOtlpPayload([makeRecord()], {});
+    const attrs = getLogAttrs(payload);
+    expect(findAttr(attrs, "stop_reason")).toBeUndefined();
+  });
+
+  it("emits skill.name on api_request when skillName is set", () => {
+    const payload = createOtlpPayload([makeRecord({ skillName: "review" })], {});
+    const apiRecords = payload.resourceLogs[0].scopeLogs[0].logRecords.filter(
+      (r) => r.body.stringValue === "claude_code.api_request",
+    );
+    expect(findAttr(apiRecords[0].attributes, "skill.name")?.value.stringValue).toBe("review");
+  });
+
+  it("emits claude_code.skill_activated event when skillName is set", () => {
+    const payload = createOtlpPayload([makeRecord({ skillName: "commit" })], {});
+    const activations = payload.resourceLogs[0].scopeLogs[0].logRecords.filter(
+      (r) => r.body.stringValue === "claude_code.skill_activated",
+    );
+    expect(activations).toHaveLength(1);
+    const attrs = activations[0].attributes;
+    expect(findAttr(attrs, "skill.name")?.value.stringValue).toBe("commit");
+    expect(findAttr(attrs, "invocation_trigger")?.value.stringValue).toBe("user-slash");
+    expect(findAttr(attrs, "skill.source")?.value.stringValue).toBe("userSettings");
+    expect(findAttr(attrs, "event.sequence")).toBeDefined();
+  });
+
+  it("assigns sequential event.sequence to activation and api_request", () => {
+    const payload = createOtlpPayload([makeRecord({ skillName: "review" })], {});
+    const records = payload.resourceLogs[0].scopeLogs[0].logRecords;
+    const activation = records.find((r) => r.body.stringValue === "claude_code.skill_activated")!;
+    const apiRequest = records.find((r) => r.body.stringValue === "claude_code.api_request")!;
+    const activationSeq = Number(
+      findAttr(activation.attributes, "event.sequence")?.value.stringValue,
+    );
+    const requestSeq = Number(findAttr(apiRequest.attributes, "event.sequence")?.value.stringValue);
+    expect(requestSeq).toBe(activationSeq + 1);
+  });
+
+  it("does not emit skill_activated when no skillName", () => {
+    const payload = createOtlpPayload([makeRecord()], {});
+    const activations = payload.resourceLogs[0].scopeLogs[0].logRecords.filter(
+      (r) => r.body.stringValue === "claude_code.skill_activated",
+    );
+    expect(activations).toHaveLength(0);
+  });
+
+  it("emits tool_count when toolNames present", () => {
+    const payload = createOtlpPayload([makeRecord({ toolNames: ["Bash", "Edit", "Read"] })], {});
+    const attrs = getLogAttrs(payload);
+    expect(findAttr(attrs, "tool_count")?.value.stringValue).toBe("3");
+  });
+
+  it("does not emit tool_count when no toolNames", () => {
+    const payload = createOtlpPayload([makeRecord()], {});
+    const attrs = getLogAttrs(payload);
+    expect(findAttr(attrs, "tool_count")).toBeUndefined();
+  });
+});

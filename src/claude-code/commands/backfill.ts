@@ -32,6 +32,12 @@ interface UsageData {
   cache_read_input_tokens?: number;
 }
 
+interface ToolUseBlock {
+  type: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
 interface JsonlEntry {
   type: string;
   requestId?: string;
@@ -41,6 +47,8 @@ interface JsonlEntry {
     id?: string;
     model?: string;
     usage?: UsageData;
+    stop_reason?: string;
+    content?: string | ToolUseBlock[];
   };
 }
 
@@ -54,6 +62,9 @@ export interface ParsedRecord {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  stopReason?: string;
+  skillName?: string;
+  toolNames?: string[];
 }
 
 interface StreamResult {
@@ -76,9 +87,11 @@ function generateTransactionId(record: ParsedRecord): string {
   return createHash("sha256").update(input).digest("hex").substring(0, 32);
 }
 
-function getRecordDedupKey(record: ParsedRecord): string | null {
-  if (!record.requestId || !record.messageId) return null;
-  return [record.requestId, record.messageId].join("|");
+function getRecordDedupKey(record: ParsedRecord): string {
+  if (record.requestId && record.messageId) {
+    return [record.requestId, record.messageId].join("|");
+  }
+  return generateTransactionId(record);
 }
 
 export function deduplicateRecords(records: ParsedRecord[]): {
@@ -86,16 +99,10 @@ export function deduplicateRecords(records: ParsedRecord[]): {
   duplicateCount: number;
 } {
   const deduped = new Map<string, ParsedRecord>();
-  const passthrough: ParsedRecord[] = [];
   let duplicateCount = 0;
 
   for (const record of records) {
     const key = getRecordDedupKey(record);
-    if (!key) {
-      passthrough.push(record);
-      continue;
-    }
-
     const existing = deduped.get(key);
     if (!existing) {
       deduped.set(key, record);
@@ -108,7 +115,7 @@ export function deduplicateRecords(records: ParsedRecord[]): {
     }
   }
 
-  return { records: [...passthrough, ...deduped.values()], duplicateCount };
+  return { records: [...deduped.values()], duplicateCount };
 }
 
 function parseRelativeDate(input: string): Date | null {
@@ -208,6 +215,21 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
 
   if (totalTokens === 0) return {};
 
+  const content = entry.message.content;
+  const toolNames: string[] = [];
+  let skillName: string | undefined;
+
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (typeof block !== "object" || block === null) continue;
+      if (block.type !== "tool_use" || !block.name) continue;
+      toolNames.push(block.name);
+      if (block.name === "Skill" && typeof block.input?.skill === "string") {
+        skillName = block.input.skill;
+      }
+    }
+  }
+
   return {
     record: {
       requestId,
@@ -219,6 +241,9 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
       outputTokens: usage.output_tokens || 0,
       cacheReadTokens: usage.cache_read_input_tokens || 0,
       cacheCreationTokens: usage.cache_creation_input_tokens || 0,
+      stopReason: entry.message.stop_reason,
+      skillName,
+      toolNames: toolNames.length > 0 ? toolNames : undefined,
     },
   };
 }
@@ -298,9 +323,63 @@ export function createOtlpPayload(
         attributes.push({ key: "user.email", value: { stringValue: email } });
       }
 
+      if (record.stopReason) {
+        attributes.push({ key: "stop_reason", value: { stringValue: record.stopReason } });
+      }
+      if (record.skillName) {
+        attributes.push({ key: "skill.name", value: { stringValue: record.skillName } });
+      }
+      if (record.toolNames) {
+        attributes.push({
+          key: "tool_count",
+          value: { stringValue: String(record.toolNames.length) },
+        });
+      }
+
       return { timeUnixNano, body: { stringValue: "claude_code.api_request" }, attributes };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
+
+  let eventSequence = 0;
+  const skillActivations: Array<{
+    timeUnixNano: string;
+    body: { stringValue: string };
+    attributes: Array<{ key: string; value: { stringValue: string } }>;
+  }> = [];
+
+  for (const record of records) {
+    if (!record.skillName) continue;
+    const timeUnixNano = toUnixNano(record.timestamp);
+    if (!timeUnixNano) continue;
+
+    const activationSeq = eventSequence++;
+    const requestSeq = eventSequence++;
+
+    skillActivations.push({
+      timeUnixNano,
+      body: { stringValue: "claude_code.skill_activated" },
+      attributes: [
+        { key: "session.id", value: { stringValue: record.sessionId } },
+        { key: "skill.name", value: { stringValue: record.skillName } },
+        { key: "invocation_trigger", value: { stringValue: "user-slash" } },
+        { key: "skill.source", value: { stringValue: "userSettings" } },
+        { key: "event.sequence", value: { stringValue: String(activationSeq) } },
+      ],
+    });
+
+    const txId = generateTransactionId(record);
+    const apiRecord = logRecords.find((r) =>
+      r.attributes.some((a) => a.key === "transaction_id" && a.value.stringValue === txId),
+    );
+    if (apiRecord) {
+      apiRecord.attributes.push({
+        key: "event.sequence",
+        value: { stringValue: String(requestSeq) },
+      });
+    }
+  }
+
+  const allLogRecords = [...skillActivations, ...logRecords];
 
   const resourceAttributes: Array<{ key: string; value: { stringValue: string } }> = [
     { key: "service.name", value: { stringValue: "claude-code" } },
@@ -323,7 +402,7 @@ export function createOtlpPayload(
         scopeLogs: [
           {
             scope: { name: "claude-code", version: "1.0.0" },
-            logRecords,
+            logRecords: allLogRecords,
           },
         ],
       },

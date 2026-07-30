@@ -71,7 +71,7 @@ export const LOG_FIELDS: FieldDefinition[] = [
     key: "transaction_id",
     type: "stringValue",
     scope: "log",
-    platforms: ["claude-code", "copilot"],
+    platforms: ["claude-code", "copilot", "cursor"],
     required: false,
   },
   {
