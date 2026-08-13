@@ -14,8 +14,9 @@ import { writeConfig, getConfigFilePath } from "../config/writer.js";
 import { SUBSCRIPTION_TIER_CONFIG, type SubscriptionTier } from "../constants.js";
 import type { ClaudeCodeConfig } from "../config/loader.js";
 import type { ShellType } from "../../_core/types/index.js";
+import { installTicketGateHook } from "../ticket/hook-installer.js";
 
-interface SetupOptions {
+export interface SetupOptions {
   apiKey?: string;
   email?: string;
   tier?: string;
@@ -24,6 +25,16 @@ interface SetupOptions {
   productName?: string;
   skipShellUpdate?: boolean;
   extraUsageEnabled?: boolean;
+
+  installTicketGate?: boolean;
+
+  skipTicketGate?: boolean;
+
+  ticketIdRegex?: string;
+
+  blockPolicy?: string;
+
+  teamId?: string;
 }
 
 function getSourceCommand(shellType: ShellType, configPath: string): string {
@@ -101,6 +112,40 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
     }
   }
 
+  if (!options.skipTicketGate) {
+    let shouldInstall = options.installTicketGate;
+
+    if (shouldInstall === undefined) {
+      const { install } = await inquirer.prompt<{ install: boolean }>([
+        {
+          type: "confirm",
+          name: "install",
+          message:
+            "Install the Revenium ticket gate hook? (blocks unattributed Claude Code sessions)",
+          default: true,
+        },
+      ]);
+      shouldInstall = install;
+    }
+
+    if (shouldInstall) {
+      const hookSpinner = ora("Installing ticket gate hook...").start();
+      try {
+        const hookResult = await installTicketGateHook();
+        hookSpinner.succeed(hookResult.message);
+      } catch (err) {
+        hookSpinner.warn(
+          `Could not install ticket gate hook: ${err instanceof Error ? err.message : "unknown error"}`,
+        );
+        console.log(
+          chalk.dim(
+            "\nManual installation: run `revenium-metering ticket-gate install` after setup.",
+          ),
+        );
+      }
+    }
+  }
+
   printSuccessMessage(config);
 }
 
@@ -164,9 +209,7 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
       url.pathname = url.pathname.split("/meter")[0];
       endpoint = url.origin + url.pathname;
     }
-  } catch {
-    // use as-is
-  }
+  } catch {}
 
   endpoint = endpoint.replace(/\/+$/, "");
 
@@ -178,6 +221,9 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
     organizationName: options.organizationName,
     productName: options.productName,
     extraUsageEnabled: options.extraUsageEnabled,
+    ticketIdRegex: options.ticketIdRegex,
+    blockPolicy: options.blockPolicy,
+    teamId: options.teamId,
   };
 }
 
@@ -202,7 +248,10 @@ function printSuccessMessage(config: ClaudeCodeConfig): void {
   console.log("\n" + chalk.yellow.bold("Next steps:"));
   console.log("  1. Restart your terminal or run:");
   console.log(chalk.cyan(`     source ${sourceFile}`));
-  console.log("  2. Start using Claude Code - telemetry will be sent automatically");
-  console.log("  3. Import past usage by running: " + chalk.cyan("revenium-metering backfill"));
-  console.log("  4. Check your usage at https://app.revenium.ai");
+  console.log("  2. Launch Claude Code against a ticket:");
+  console.log(chalk.cyan("     revenium-metering ticket launch <TICKET-ID>"));
+  console.log("  3. Switch tickets mid-session:");
+  console.log(chalk.cyan("     switch-ticket <TICKET-ID>"));
+  console.log("  4. Import past usage by running: " + chalk.cyan("revenium-metering backfill"));
+  console.log("  5. Check your usage at https://app.revenium.ai");
 }
