@@ -27,6 +27,7 @@ export const SUBSCRIPTION_TIERS = Object.keys(SUBSCRIPTION_TIER_CONFIG) as Reado
 
 export type SubscriptionTier = keyof typeof SUBSCRIPTION_TIER_CONFIG;
 
+// Deployment-channel marker; "revenium-cli" for CLI installs.
 export const MIDDLEWARE_SOURCE_KEY = "revenium.middleware.source";
 export const MIDDLEWARE_SOURCE_CLI = "revenium-cli";
 
@@ -41,7 +42,4 @@ export const ENV_VARS = {
   EXTRA_USAGE_ENABLED: "CLAUDE_CODE_EXTRA_USAGE_ENABLED",
   ORGANIZATION_ID: "REVENIUM_ORGANIZATION_ID",
   PRODUCT_ID: "REVENIUM_PRODUCT_ID",
-  TICKET_REGEX: "REVENIUM_TICKET_REGEX",
-  TICKET_BLOCK_POLICY: "REVENIUM_TICKET_BLOCK_POLICY",
-  TEAM_ID: "REVENIUM_TEAM_ID",
 } as const;

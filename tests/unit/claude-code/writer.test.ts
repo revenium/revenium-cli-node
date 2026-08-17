@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import { generateEnvContent, generateFishContent } from "../../../src/claude-code/config/writer.js";
 import type { ClaudeCodeConfig } from "../../../src/claude-code/config/loader.js";
 
+/** Minimal valid config with only required fields. */
 const minimalConfig: ClaudeCodeConfig = {
   apiKey: "hak_testkey123",
   endpoint: "https://api.revenium.ai",
 };
 
+/** Fully populated config covering all optional fields. */
 const fullConfig: ClaudeCodeConfig = {
   apiKey: "hak_fullkey456",
   endpoint: "https://api.revenium.ai",
@@ -15,7 +17,6 @@ const fullConfig: ClaudeCodeConfig = {
   organizationName: "Acme Corp",
   productName: "Widget API",
   extraUsageEnabled: true,
-  teamId: "teamHash123",
 };
 
 describe("generateEnvContent — all fields populated", () => {
@@ -40,11 +41,6 @@ describe("generateEnvContent — all fields populated", () => {
   it("includes CLAUDE_CODE_EXTRA_USAGE_ENABLED=1 when extraUsageEnabled is true", () => {
     const output = generateEnvContent(fullConfig);
     expect(output).toContain("export CLAUDE_CODE_EXTRA_USAGE_ENABLED=1");
-  });
-
-  it("includes REVENIUM_TEAM_ID when configured", () => {
-    const output = generateEnvContent(fullConfig);
-    expect(output).toContain('export REVENIUM_TEAM_ID="teamHash123"');
   });
 
   it("includes organization.name in OTEL_RESOURCE_ATTRIBUTES", () => {
@@ -256,11 +252,6 @@ describe("generateFishContent — mirrors bash content semantically", () => {
   it("writes CLAUDE_CODE_EXTRA_USAGE_ENABLED=1 with fish syntax", () => {
     const output = generateFishContent(fullConfig);
     expect(output).toContain("set -gx CLAUDE_CODE_EXTRA_USAGE_ENABLED 1");
-  });
-
-  it("includes REVENIUM_TEAM_ID with fish syntax", () => {
-    const output = generateFishContent(fullConfig);
-    expect(output).toContain("set -gx REVENIUM_TEAM_ID 'teamHash123'");
   });
 
   it("writes CLAUDE_CODE_EXTRA_USAGE_ENABLED=0 when false", () => {

@@ -20,6 +20,7 @@ function getClaudeConfigDir(): string {
   return join(homedir(), CLAUDE_CONFIG_DIR);
 }
 
+// Shared OTEL_RESOURCE_ATTRIBUTES pairs for the bash and fish writers; always stamps the marker.
 function buildResourceAttributePairs(config: ClaudeCodeConfig): string[] {
   const resourceAttrs: string[] = [
     `${MIDDLEWARE_SOURCE_KEY}=${escapeResourceAttributeValue(MIDDLEWARE_SOURCE_CLI)}`,
@@ -85,25 +86,6 @@ export function generateEnvContent(config: ClaudeCodeConfig): string {
     lines.push(`export ${ENV_VARS.EXTRA_USAGE_ENABLED}=${config.extraUsageEnabled ? 1 : 0}`);
   }
 
-  if (config.ticketIdRegex) {
-    lines.push("");
-    lines.push(
-      `export ${ENV_VARS.TICKET_REGEX}=${escapeDoubleQuotedShellValue(config.ticketIdRegex)}`,
-    );
-  }
-
-  if (config.blockPolicy) {
-    lines.push("");
-    lines.push(
-      `export ${ENV_VARS.TICKET_BLOCK_POLICY}=${escapeDoubleQuotedShellValue(config.blockPolicy)}`,
-    );
-  }
-
-  if (config.teamId) {
-    lines.push("");
-    lines.push(`export ${ENV_VARS.TEAM_ID}=${escapeDoubleQuotedShellValue(config.teamId)}`);
-  }
-
   const resourceAttrs = buildResourceAttributePairs(config);
   lines.push("");
   lines.push(`export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs.join(",")}"`);
@@ -143,21 +125,6 @@ export function generateFishContent(config: ClaudeCodeConfig): string {
   if (config.extraUsageEnabled !== undefined) {
     lines.push("");
     lines.push(`set -gx ${ENV_VARS.EXTRA_USAGE_ENABLED} ${config.extraUsageEnabled ? 1 : 0}`);
-  }
-
-  if (config.ticketIdRegex) {
-    lines.push("");
-    lines.push(`set -gx ${ENV_VARS.TICKET_REGEX} ${escapeFishValue(config.ticketIdRegex)}`);
-  }
-
-  if (config.blockPolicy) {
-    lines.push("");
-    lines.push(`set -gx ${ENV_VARS.TICKET_BLOCK_POLICY} ${escapeFishValue(config.blockPolicy)}`);
-  }
-
-  if (config.teamId) {
-    lines.push("");
-    lines.push(`set -gx ${ENV_VARS.TEAM_ID} ${escapeFishValue(config.teamId)}`);
   }
 
   const resourceAttrs = buildResourceAttributePairs(config);

@@ -20,19 +20,9 @@ export interface ClaudeCodeConfig {
   extraUsageEnabled?: boolean;
   organizationName?: string;
   productName?: string;
-
-  ticketIdRegex?: string;
-
-  blockPolicy?: string;
-
-  teamId?: string;
 }
 
 export function getConfigPath(): string {
-  const override = process.env.REVENIUM_CONFIG_PATH;
-  if (override && override.trim()) {
-    return override.trim();
-  }
   return join(homedir(), CLAUDE_CONFIG_DIR, REVENIUM_ENV_FILE);
 }
 
@@ -75,6 +65,8 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
     const resourceAttrsStr = env["OTEL_RESOURCE_ATTRIBUTES"] || "";
     const resourceAttrs = parseOtelResourceAttributes(resourceAttrsStr);
 
+    // BACK-1456: env-var names ENV_VARS.ORGANIZATION_ID / PRODUCT_ID preserved
+    // (user-facing config); only the typed field names and wire-emit migrate to *Name.
     const organizationName =
       resourceAttrs["organization.name"] ||
       resourceAttrs["organization.id"] ||
@@ -91,7 +83,6 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       extraUsageEnabled,
       organizationName,
       productName,
-      teamId: env[ENV_VARS.TEAM_ID] || undefined,
     };
   } catch {
     return null;

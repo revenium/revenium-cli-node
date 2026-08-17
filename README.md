@@ -187,7 +187,7 @@ Wait sync interval (default 5 min) -> repeat
 
 | Binary              | Tool           | Commands                                          |
 | ------------------- | -------------- | ------------------------------------------------- |
-| `revenium-metering` | Claude Code    | `setup` `status` `test` `backfill` `ticket` `ticket-gate` |
+| `revenium-metering` | Claude Code    | `setup` `status` `test` `backfill`                |
 | `revenium-gemini`   | Gemini CLI     | `setup` `status` `test`                           |
 | `revenium-cursor`   | Cursor IDE     | `setup` `status` `test` `sync` `reset` `backfill` |
 | `revenium-copilot`  | GitHub Copilot | `setup` `status` `test` `sync` `reset` `backfill` |
@@ -231,33 +231,6 @@ After setup, verify with:
 revenium-metering status    # Check configuration and connectivity
 revenium-metering test      # Send a test metric to verify integration
 ```
-
-#### Attribute Claude Code work to a ticket
-
-Setup can install a local gate that requires every interactive session to be
-associated with a ticket. Launch a new session with explicit attribution:
-
-```bash
-revenium-metering ticket launch PRODUCT-1234
-```
-
-To switch the active session safely, type this as the next Claude Code prompt
-in the terminal you want to switch:
-
-```text
-switch-ticket BACK-42
-```
-
-An explicit opt-out requires a reason:
-
-```text
-switch-ticket none --reason exploratory spike
-```
-
-The gate also infers ticket IDs from branch names, supports organization-level
-ticket patterns and blocking policies, and retries failed attribution writes
-without blocking prompts. See the [ticket gate rollout guide](docs/ticket-gate-org-rollout.md)
-for concurrent-session behavior and managed fleet deployment.
 
 ### Quick Start - Gemini CLI
 
