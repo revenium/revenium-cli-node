@@ -11,6 +11,7 @@ import {
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { updateShellProfile, getManualInstructions } from "../../_core/shell/profile-updater.js";
 import { writeConfig, getConfigFilePath } from "../config/writer.js";
+import { removeLegacyTicketGate } from "../config/legacy-ticket-gate.js";
 import { SUBSCRIPTION_TIER_CONFIG, type SubscriptionTier } from "../constants.js";
 import type { ClaudeCodeConfig } from "../config/loader.js";
 import type { ShellType } from "../../_core/types/index.js";
@@ -99,6 +100,11 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
     } catch {
       shellSpinner.warn("Could not update shell profile automatically");
     }
+  }
+
+  const cleanup = await removeLegacyTicketGate();
+  if (cleanup.hookRemovedFromSettings || cleanup.scriptDeleted) {
+    console.log(chalk.dim("Removed legacy Revenium ticket gate hook from Claude Code settings."));
   }
 
   printSuccessMessage(config);

@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Ticket attribution hooks (`revenium-metering ticket`, ticket gate hook, session state, Linear resolver) pending internal testing
 
+### Fixed
+
+- `revenium-metering setup` now removes the ticket gate hook installed by 1.1.11 from `~/.claude/settings.json` and deletes its script, so upgraded users are not blocked by a hook whose commands no longer exist
+
 ## [1.1.11] - 2026-08-13
 
 ### Added
@@ -253,6 +257,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.12]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.12
+[1.1.11]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.11
 [1.1.10]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.10
 [1.1.9]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.9
 [1.1.8]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.8
