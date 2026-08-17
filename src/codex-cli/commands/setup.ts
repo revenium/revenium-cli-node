@@ -122,14 +122,6 @@ export async function setupAction(options: SetupOptions = {}): Promise<void> {
     }
   }
 
-  if (config.email) {
-    console.log(
-      chalk.gray(
-        `Note: ${config.email} attributes backfilled usage only. Live Codex sessions report their own signed-in identity (ChatGPT login) or no identity at all (API key) — the configured email does not apply there.`,
-      ),
-    );
-  }
-
   console.log("\n" + chalk.green.bold("Setup complete!"));
 }
 
@@ -153,8 +145,7 @@ async function collectConfig(options: SetupOptions): Promise<CodexOtelConfig> {
     {
       type: "input",
       name: "email",
-      message:
-        "Email for backfill attribution (optional) — live sessions report their own signed-in identity, or none under an API key:",
+      message: "Email for usage attribution (optional):",
       when: !options.email,
     },
     {

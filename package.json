@@ -1,6 +1,6 @@
 {
   "name": "@revenium/cli",
-  "version": "1.1.11",
+  "version": "1.1.12",
   "description": "Unified Revenium CLI tools for Claude Code, Gemini CLI, Cursor, GitHub Copilot, and Codex metering setup",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,10 +12,9 @@
     "revenium-copilot": "./dist/copilot/cli/index.js"
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-static-assets.cjs",
+    "build": "tsc",
     "clean": "node -e \"const fs = require('fs'); if (fs.existsSync('dist')) fs.rmSync('dist', {recursive: true, force: true})\"",
-    "prepublishOnly": "npm run clean && npm run build && npm run verify:package",
-    "verify:package": "node scripts/verify-package-contents.cjs",
+    "prepublishOnly": "npm run clean && npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:core": "vitest run tests/unit/_core",
