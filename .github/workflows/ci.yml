@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, deploy]
+  # Every PR, whatever it targets. Scoping this to main meant a stacked PR — a normal pattern in
+  # this repo — ran no build-and-test at all, while still showing a green tick from the checks
+  # that did run. secret-scan.yml already uses this pattern.
   pull_request:
-    branches: [main]
+    branches: ['**']
 
 jobs:
   build-and-test:
@@ -29,5 +32,6 @@ jobs:
       - run: npm run format:check
 
       - run: npm run build
+      - run: npm run verify:public
 
       - run: npm test

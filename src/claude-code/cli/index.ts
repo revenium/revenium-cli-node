@@ -1,13 +1,39 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { setupCommand } from "../commands/setup.js";
+import { setupCommand, type SetupOptions } from "../commands/setup.js";
 import { statusCommand } from "../commands/status.js";
 import { testCommand } from "../commands/test.js";
 import { backfillCommand } from "../commands/backfill.js";
 import pkg from "../../../package.json";
 
 export const program = new Command();
+
+interface CliSetupOptions {
+  apiKey?: string;
+  email?: string;
+  endpoint?: string;
+  organization?: string;
+  product?: string;
+  teamId?: string;
+  skipShellUpdate?: boolean;
+  extraUsageEnabled?: boolean;
+  mgmtEndpoint?: string;
+}
+
+export function toSetupOptions(options: CliSetupOptions): SetupOptions {
+  return {
+    apiKey: options.apiKey,
+    email: options.email,
+    endpoint: options.endpoint,
+    organizationName: options.organization,
+    productName: options.product,
+    teamId: options.teamId,
+    skipShellUpdate: options.skipShellUpdate,
+    extraUsageEnabled: options.extraUsageEnabled || undefined,
+    managementEndpoint: options.mgmtEndpoint,
+  };
+}
 
 program
   .name("revenium-metering")
@@ -19,23 +45,22 @@ program
   .description("Interactive setup wizard to configure Claude Code metering")
   .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
   .option("-e, --email <email>", "Email for usage attribution")
-  .option("-t, --tier <tier>", "Subscription tier")
   .option("--endpoint <url>", "Revenium API endpoint URL")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")
+  .option(
+    "--team-id <id>",
+    "Organization hashid for session attribution (optional when the backend derives it from the metering key)",
+  )
+  .option(
+    "--mgmt-endpoint <url>",
+    "Override the management-plane API base URL used for session attribution " +
+      "(defaults to <endpoint>/profitstream — set this if your environment's context path differs)",
+  )
   .option("--skip-shell-update", "Skip automatic shell profile update")
   .option("--extra-usage-enabled", "Set CLAUDE_CODE_EXTRA_USAGE_ENABLED=1 in SDK config")
-  .action(async (options) => {
-    await setupCommand({
-      apiKey: options.apiKey,
-      email: options.email,
-      tier: options.tier,
-      endpoint: options.endpoint,
-      organizationName: options.organization,
-      productName: options.product,
-      skipShellUpdate: options.skipShellUpdate,
-      extraUsageEnabled: options.extraUsageEnabled || undefined,
-    });
+  .action(async (options: CliSetupOptions) => {
+    await setupCommand(toSetupOptions(options));
   });
 
 program

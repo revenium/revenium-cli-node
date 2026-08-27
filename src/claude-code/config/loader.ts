@@ -7,23 +7,43 @@ import {
   parseOtelResourceAttributes,
   extractBaseEndpoint,
   getFullOtlpEndpoint,
+  getManagementEndpoint,
 } from "../../_core/config/loader.js";
-import { CLAUDE_CONFIG_DIR, ENV_VARS } from "../constants.js";
-import type { SubscriptionTier } from "../constants.js";
+import { CLAUDE_HOME_DIR_NAME, ENV_VARS } from "../constants.js";
 import { REVENIUM_ENV_FILE } from "../../_core/constants.js";
+import { getConfigPath as getCursorConfigPath } from "../../cursor/config/loader.js";
 
 export interface ClaudeCodeConfig {
   apiKey: string;
   endpoint: string;
   email?: string;
-  subscriptionTier?: SubscriptionTier;
   extraUsageEnabled?: boolean;
   organizationName?: string;
   productName?: string;
+
+  teamId?: string;
+
+  // Explicit override for the management-plane API base (session attribution, etc.).
+  // Undefined means "use the default" — resolved at call time via getManagementEndpoint().
+  managementEndpoint?: string;
 }
 
 export function getConfigPath(): string {
-  return join(homedir(), CLAUDE_CONFIG_DIR, REVENIUM_ENV_FILE);
+  const override = process.env.REVENIUM_CONFIG_PATH;
+  if (override && override.trim()) {
+    return override.trim();
+  }
+  const claudePath = join(homedir(), CLAUDE_HOME_DIR_NAME, REVENIUM_ENV_FILE);
+  if (existsSync(claudePath)) {
+    return claudePath;
+  }
+  // Cursor-only machines have no ~/.claude/revenium.env, so fall back to the config Cursor's
+  // own setup wrote.
+  const cursorPath = getCursorConfigPath();
+  if (existsSync(cursorPath)) {
+    return cursorPath;
+  }
+  return claudePath;
 }
 
 export function configExists(): boolean {
@@ -54,10 +74,6 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       return null;
     }
 
-    const subscriptionTier = (env[ENV_VARS.SUBSCRIPTION_TIER] || env[ENV_VARS.SUBSCRIPTION]) as
-      | SubscriptionTier
-      | undefined;
-
     const extraUsageEnabledRaw = env[ENV_VARS.EXTRA_USAGE_ENABLED];
     const extraUsageEnabled =
       extraUsageEnabledRaw === "1" ? true : extraUsageEnabledRaw === "0" ? false : undefined;
@@ -65,8 +81,6 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
     const resourceAttrsStr = env["OTEL_RESOURCE_ATTRIBUTES"] || "";
     const resourceAttrs = parseOtelResourceAttributes(resourceAttrsStr);
 
-    // BACK-1456: env-var names ENV_VARS.ORGANIZATION_ID / PRODUCT_ID preserved
-    // (user-facing config); only the typed field names and wire-emit migrate to *Name.
     const organizationName =
       resourceAttrs["organization.name"] ||
       resourceAttrs["organization.id"] ||
@@ -79,10 +93,14 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       apiKey,
       endpoint: extractBaseEndpoint(fullEndpoint),
       email: env[ENV_VARS.SUBSCRIBER_EMAIL],
-      subscriptionTier,
       extraUsageEnabled,
       organizationName,
       productName,
+      teamId: env[ENV_VARS.TEAM_ID] || undefined,
+      // Process env wins over the config file: the constant is documented as a shell-level
+      // override and config/writer.ts emits it as an export (PRODUCT-2674 bug 2).
+      managementEndpoint:
+        process.env[ENV_VARS.MGMT_ENDPOINT]?.trim() || env[ENV_VARS.MGMT_ENDPOINT] || undefined,
     };
   } catch {
     return null;
@@ -93,4 +111,4 @@ export function isEnvLoaded(): boolean {
   return process.env[ENV_VARS.TELEMETRY_ENABLED] === "1" && !!process.env[ENV_VARS.OTLP_ENDPOINT];
 }
 
-export { getFullOtlpEndpoint };
+export { getFullOtlpEndpoint, getManagementEndpoint };

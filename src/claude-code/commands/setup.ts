@@ -11,20 +11,22 @@ import {
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { updateShellProfile, getManualInstructions } from "../../_core/shell/profile-updater.js";
 import { writeConfig, getConfigFilePath } from "../config/writer.js";
-import { removeLegacyTicketGate } from "../config/legacy-ticket-gate.js";
-import { SUBSCRIPTION_TIER_CONFIG, type SubscriptionTier } from "../constants.js";
 import type { ClaudeCodeConfig } from "../config/loader.js";
+import { removeLegacyTicketGate } from "../config/legacy-ticket-gate.js";
 import type { ShellType } from "../../_core/types/index.js";
 
-interface SetupOptions {
+export interface SetupOptions {
   apiKey?: string;
   email?: string;
-  tier?: string;
   endpoint?: string;
   organizationName?: string;
   productName?: string;
   skipShellUpdate?: boolean;
   extraUsageEnabled?: boolean;
+
+  teamId?: string;
+
+  managementEndpoint?: string;
 }
 
 function getSourceCommand(shellType: ShellType, configPath: string): string {
@@ -135,20 +137,6 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
       },
     },
     {
-      type: "list",
-      name: "tier",
-      message: "Select your Claude Code subscription tier:",
-      when: !options.tier,
-      pageSize: 20,
-      choices: [
-        ...Object.entries(SUBSCRIPTION_TIER_CONFIG).map(([key, cfg]) => ({
-          name: cfg.name,
-          value: key,
-        })),
-        new inquirer.Separator(" "),
-      ],
-    },
-    {
       type: "input",
       name: "endpoint",
       message: "Revenium API endpoint:",
@@ -170,20 +158,19 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
       url.pathname = url.pathname.split("/meter")[0];
       endpoint = url.origin + url.pathname;
     }
-  } catch {
-    // use as-is
-  }
+  } catch {}
 
   endpoint = endpoint.replace(/\/+$/, "");
 
   return {
     apiKey: options.apiKey || answers.apiKey,
     email: options.email || answers.email || undefined,
-    subscriptionTier: (options.tier || answers.tier) as SubscriptionTier,
     endpoint,
     organizationName: options.organizationName,
     productName: options.productName,
     extraUsageEnabled: options.extraUsageEnabled,
+    teamId: options.teamId,
+    managementEndpoint: options.managementEndpoint,
   };
 }
 
@@ -196,19 +183,12 @@ function printSuccessMessage(config: ClaudeCodeConfig): void {
   if (config.email) {
     console.log(`  Email:      ${maskEmail(config.email)}`);
   }
-  if (config.subscriptionTier) {
-    const tier = config.subscriptionTier as SubscriptionTier;
-    const tierConfig = SUBSCRIPTION_TIER_CONFIG[tier];
-    console.log(`  Tier:       ${tierConfig.name}`);
-  }
-
   const isFish = process.env.SHELL?.includes("fish");
   const sourceFile = isFish ? "~/.claude/revenium.fish" : "~/.claude/revenium.env";
 
   console.log("\n" + chalk.yellow.bold("Next steps:"));
   console.log("  1. Restart your terminal or run:");
   console.log(chalk.cyan(`     source ${sourceFile}`));
-  console.log("  2. Start using Claude Code - telemetry will be sent automatically");
-  console.log("  3. Import past usage by running: " + chalk.cyan("revenium-metering backfill"));
-  console.log("  4. Check your usage at https://app.revenium.ai");
+  console.log("  2. Import past usage by running: " + chalk.cyan("revenium-metering backfill"));
+  console.log("  3. Check your usage at https://app.revenium.ai");
 }

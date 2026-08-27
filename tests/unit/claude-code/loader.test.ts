@@ -1,30 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock node:fs to control existsSync
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => true),
 }));
 
-// Mock node:fs/promises to control readFile
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
 }));
 
-// Mock node:os to control homedir
 vi.mock("node:os", () => ({
   homedir: vi.fn(() => "/home/testuser"),
 }));
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { loadConfig } from "../../../src/claude-code/config/loader.js";
+import { loadConfig, getConfigPath } from "../../../src/claude-code/config/loader.js";
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFile = vi.mocked(readFile);
 
-/**
- * Build a minimal valid env file content string with the given extra lines.
- */
 function buildEnvContent(extras: Record<string, string> = {}): string {
   const base: Record<string, string> = {
     OTEL_EXPORTER_OTLP_ENDPOINT: "https://api.revenium.ai/meter/v2/otlp",
@@ -43,26 +37,8 @@ beforeEach(() => {
   mockExistsSync.mockReturnValue(true);
 });
 
-describe("loadConfig — subscriptionTier resolution", () => {
-  it("uses CLAUDE_CODE_SUBSCRIPTION_TIER when only it is set", async () => {
-    mockReadFile.mockResolvedValue(
-      buildEnvContent({ CLAUDE_CODE_SUBSCRIPTION_TIER: "pro" }) as unknown as Buffer,
-    );
-
-    const config = await loadConfig();
-    expect(config?.subscriptionTier).toBe("pro");
-  });
-
-  it("uses CLAUDE_CODE_SUBSCRIPTION when only it is set (backward compat)", async () => {
-    mockReadFile.mockResolvedValue(
-      buildEnvContent({ CLAUDE_CODE_SUBSCRIPTION: "max_5x" }) as unknown as Buffer,
-    );
-
-    const config = await loadConfig();
-    expect(config?.subscriptionTier).toBe("max_5x");
-  });
-
-  it("prefers CLAUDE_CODE_SUBSCRIPTION_TIER over CLAUDE_CODE_SUBSCRIPTION when both are set", async () => {
+describe("loadConfig — retired subscription-tier vars are tolerated, not surfaced", () => {
+  it("loads cleanly from an old env file that still sets CLAUDE_CODE_SUBSCRIPTION_TIER and CLAUDE_CODE_SUBSCRIPTION", async () => {
     mockReadFile.mockResolvedValue(
       buildEnvContent({
         CLAUDE_CODE_SUBSCRIPTION_TIER: "enterprise",
@@ -71,26 +47,16 @@ describe("loadConfig — subscriptionTier resolution", () => {
     );
 
     const config = await loadConfig();
-    expect(config?.subscriptionTier).toBe("enterprise");
+    expect(config).not.toBeNull();
+    expect(config?.apiKey).toBe("hak_testkey123");
+    expect("subscriptionTier" in (config as object)).toBe(false);
   });
 
-  it("sets subscriptionTier to undefined when neither env var is set", async () => {
+  it("does not surface a subscriptionTier field even when neither legacy var is set", async () => {
     mockReadFile.mockResolvedValue(buildEnvContent() as unknown as Buffer);
 
     const config = await loadConfig();
-    expect(config?.subscriptionTier).toBeUndefined();
-  });
-
-  it("falls back to CLAUDE_CODE_SUBSCRIPTION when SUBSCRIPTION_TIER is empty string", async () => {
-    mockReadFile.mockResolvedValue(
-      buildEnvContent({
-        CLAUDE_CODE_SUBSCRIPTION_TIER: "",
-        CLAUDE_CODE_SUBSCRIPTION: "max_5x",
-      }) as unknown as Buffer,
-    );
-
-    const config = await loadConfig();
-    expect(config?.subscriptionTier).toBe("max_5x");
+    expect("subscriptionTier" in (config as object)).toBe(false);
   });
 });
 
@@ -130,6 +96,44 @@ describe("loadConfig — extraUsageEnabled parsing", () => {
   });
 });
 
+describe("loadConfig — session attribution teamId", () => {
+  it("loads REVENIUM_TEAM_ID when configured", async () => {
+    mockReadFile.mockResolvedValue(
+      buildEnvContent({ REVENIUM_TEAM_ID: "teamHash123" }) as unknown as Buffer,
+    );
+
+    const config = await loadConfig();
+    expect(config?.teamId).toBe("teamHash123");
+  });
+
+  it("leaves teamId undefined when the backend derives it from the metering key", async () => {
+    mockReadFile.mockResolvedValue(buildEnvContent() as unknown as Buffer);
+
+    const config = await loadConfig();
+    expect(config?.teamId).toBeUndefined();
+  });
+});
+
+describe("loadConfig — management API endpoint override", () => {
+  it("loads REVENIUM_MGMT_ENDPOINT when configured", async () => {
+    mockReadFile.mockResolvedValue(
+      buildEnvContent({
+        REVENIUM_MGMT_ENDPOINT: "https://mgmt.example.com",
+      }) as unknown as Buffer,
+    );
+
+    const config = await loadConfig();
+    expect(config?.managementEndpoint).toBe("https://mgmt.example.com");
+  });
+
+  it("leaves managementEndpoint undefined when not configured (default resolved at call time)", async () => {
+    mockReadFile.mockResolvedValue(buildEnvContent() as unknown as Buffer);
+
+    const config = await loadConfig();
+    expect(config?.managementEndpoint).toBeUndefined();
+  });
+});
+
 describe("loadConfig — backward compatibility", () => {
   it("loads a config without new fields without errors", async () => {
     mockReadFile.mockResolvedValue(buildEnvContent() as unknown as Buffer);
@@ -164,5 +168,29 @@ describe("loadConfig — returns null cases", () => {
 
     const config = await loadConfig();
     expect(config).toBeNull();
+  });
+});
+
+describe("getConfigPath — REVENIUM_CONFIG_PATH override", () => {
+  afterEach(() => {
+    delete process.env.REVENIUM_CONFIG_PATH;
+  });
+
+  it("uses the override path when REVENIUM_CONFIG_PATH is set", () => {
+    process.env.REVENIUM_CONFIG_PATH = "/tmp/revenium-local-e2e.env";
+    expect(getConfigPath()).toBe("/tmp/revenium-local-e2e.env");
+  });
+
+  it("trims surrounding whitespace from the override path", () => {
+    process.env.REVENIUM_CONFIG_PATH = "  /tmp/revenium-local-e2e.env  ";
+    expect(getConfigPath()).toBe("/tmp/revenium-local-e2e.env");
+  });
+
+  it("falls back to ~/.claude/revenium.env when unset or blank", () => {
+    process.env.REVENIUM_CONFIG_PATH = "   ";
+    expect(getConfigPath()).toContain(".claude");
+    expect(getConfigPath()).toContain("revenium.env");
+    delete process.env.REVENIUM_CONFIG_PATH;
+    expect(getConfigPath()).toContain("revenium.env");
   });
 });

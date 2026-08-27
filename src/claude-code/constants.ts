@@ -1,33 +1,5 @@
-export const CLAUDE_CONFIG_DIR = ".claude";
+export const CLAUDE_HOME_DIR_NAME = ".claude";
 
-export const SUBSCRIPTION_TIER_CONFIG = {
-  pro: {
-    name: "Pro (~$20 USD/month or local equivalent)",
-  },
-  max_5x: {
-    name: "Max 5x (~$100 USD/month or local equivalent)",
-  },
-  max_20x: {
-    name: "Max 20x (~$200 USD/month or local equivalent)",
-  },
-  team_premium: {
-    name: "Team Premium (~$125 USD/seat or local equivalent)",
-  },
-  enterprise: {
-    name: "Enterprise (custom)",
-  },
-  api: {
-    name: "API (no subscription)",
-  },
-} as const;
-
-export const SUBSCRIPTION_TIERS = Object.keys(SUBSCRIPTION_TIER_CONFIG) as ReadonlyArray<
-  keyof typeof SUBSCRIPTION_TIER_CONFIG
->;
-
-export type SubscriptionTier = keyof typeof SUBSCRIPTION_TIER_CONFIG;
-
-// Deployment-channel marker; "revenium-cli" for CLI installs.
 export const MIDDLEWARE_SOURCE_KEY = "revenium.middleware.source";
 export const MIDDLEWARE_SOURCE_CLI = "revenium-cli";
 
@@ -37,9 +9,10 @@ export const ENV_VARS = {
   OTLP_HEADERS: "OTEL_EXPORTER_OTLP_HEADERS",
   OTLP_PROTOCOL: "OTEL_EXPORTER_OTLP_PROTOCOL",
   SUBSCRIBER_EMAIL: "REVENIUM_SUBSCRIBER_EMAIL",
-  SUBSCRIPTION: "CLAUDE_CODE_SUBSCRIPTION",
-  SUBSCRIPTION_TIER: "CLAUDE_CODE_SUBSCRIPTION_TIER",
   EXTRA_USAGE_ENABLED: "CLAUDE_CODE_EXTRA_USAGE_ENABLED",
   ORGANIZATION_ID: "REVENIUM_ORGANIZATION_ID",
   PRODUCT_ID: "REVENIUM_PRODUCT_ID",
+  TEAM_ID: "REVENIUM_TEAM_ID",
+  CLAUDE_CONFIG_DIR: "CLAUDE_CONFIG_DIR",
+  MGMT_ENDPOINT: "REVENIUM_MGMT_ENDPOINT",
 } as const;

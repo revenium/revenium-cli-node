@@ -1,4 +1,4 @@
-import { OTLP_PATH } from "../constants.js";
+import { OTLP_PATH, MGMT_API_PATH_SUFFIX } from "../constants.js";
 
 export function parseEnvContent(content: string, isFish = false): Record<string, string> {
   const result: Record<string, string> = {};
@@ -103,4 +103,13 @@ export function extractBaseEndpoint(fullEndpoint: string): string {
 export function getFullOtlpEndpoint(baseUrl: string): string {
   const cleanUrl = baseUrl.replace(/\/$/, "");
   return `${cleanUrl}${OTLP_PATH}`;
+}
+
+// Management-plane API base (session attribution, etc.) — distinct from the OTLP ingest origin.
+// An explicit override always wins; otherwise defaults to `${otlpOrigin}/profitstream`.
+export function getManagementEndpoint(otlpOrigin: string, override?: string): string {
+  if (override && override.trim()) {
+    return override.trim().replace(/\/+$/, "");
+  }
+  return `${otlpOrigin.replace(/\/+$/, "")}${MGMT_API_PATH_SUFFIX}`;
 }

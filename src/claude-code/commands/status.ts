@@ -32,9 +32,6 @@ export async function statusCommand(): Promise<void> {
   if (config.email) {
     console.log(`  Email:      ${maskEmail(config.email)}`);
   }
-  if (config.subscriptionTier) {
-    console.log(`  Tier:       ${config.subscriptionTier}`);
-  }
   const organizationValue = config.organizationName;
   if (organizationValue) {
     console.log(`  Organization: ${organizationValue}`);
