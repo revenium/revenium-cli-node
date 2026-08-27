@@ -1,6 +1,6 @@
 {
   "name": "@revenium/cli",
-  "version": "1.1.12",
+  "version": "1.1.13",
   "description": "Unified Revenium CLI tools for Claude Code, Gemini CLI, Cursor, GitHub Copilot, and Codex metering setup",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "clean": "node -e \"const fs = require('fs'); if (fs.existsSync('dist')) fs.rmSync('dist', {recursive: true, force: true})\"",
-    "prepublishOnly": "npm run clean && npm run build",
+    "prepublishOnly": "npm run clean && npm run build && npm run verify:public",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:core": "vitest run tests/unit/_core",
@@ -26,7 +26,8 @@
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\""
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "verify:public": "node scripts/verify-public-build.cjs"
   },
   "keywords": [
     "revenium",

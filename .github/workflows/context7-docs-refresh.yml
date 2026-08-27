@@ -16,7 +16,6 @@ jobs:
             source: 'docs-cron-gitbook'
       fail-fast: false
 
-    continue-on-error: true
     uses: ./.github/workflows/context7-refresh.yml
     with:
       library-id: ${{ matrix.library-id }}

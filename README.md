@@ -47,7 +47,7 @@ A professional-grade set of CLI tools that configure automatic AI usage tracking
 |   |-- cli/                 Commander entry point
 |   |-- commands/            setup, status, test, backfill
 |   |-- config/              ~/.claude/revenium.env loader/writer
-|   +-- constants            Subscription tiers and cost multipliers
+|   +-- constants            Env var names and resource-attribute keys
 |
 |-- gemini-cli/             Gemini CLI (revenium-gemini)
 |   |-- cli/                 Commander entry point
@@ -187,7 +187,7 @@ Wait sync interval (default 5 min) -> repeat
 
 | Binary              | Tool           | Commands                                          |
 | ------------------- | -------------- | ------------------------------------------------- |
-| `revenium-metering` | Claude Code    | `setup` `status` `test` `backfill`                |
+| `revenium-metering` | Claude Code    | `setup` `status` `test` `backfill`                 |
 | `revenium-gemini`   | Gemini CLI     | `setup` `status` `test`                           |
 | `revenium-cursor`   | Cursor IDE     | `setup` `status` `test` `sync` `reset` `backfill` |
 | `revenium-copilot`  | GitHub Copilot | `setup` `status` `test` `sync` `reset` `backfill` |
@@ -218,7 +218,7 @@ REVENIUM_ENDPOINT=https://api.revenium.ai
 revenium-metering setup
 ```
 
-The setup wizard will prompt for your API key, email, subscription tier, and endpoint. It automatically:
+The setup wizard will prompt for your API key, email, and endpoint. It automatically:
 
 1. Validates your API key format (`hak_` or `rev_` prefix)
 2. Tests connectivity to the Revenium endpoint
@@ -301,7 +301,6 @@ Interactive setup wizard for Claude Code metering.
 | ----------------------- | ---------------------------------------------------------------------------------- |
 | `--api-key <key>`       | Revenium API key (skips prompt)                                                    |
 | `--email <email>`       | Email for usage attribution                                                        |
-| `--tier <tier>`         | Subscription tier: `pro`, `max_5x`, `max_20x`, `team_premium`, `enterprise`, `api` |
 | `--endpoint <url>`      | Revenium API endpoint (default: `https://api.revenium.ai`)                         |
 | `--organization <name>` | Organization name                                                                  |
 | `--product <name>`      | Product name                                                                       |
@@ -530,17 +529,6 @@ Imports historical Codex usage sessions from `~/.codex/sessions/`.
 | `--config-path <path>`   | Path to Codex config.toml                |
 
 ## Subscription Tiers
-
-### Claude Code
-
-| Tier           | Plan                      | Cost Multiplier |
-| -------------- | ------------------------- | --------------- |
-| `pro`          | Pro (~$20/mo)             | 0.16            |
-| `max_5x`       | Max 5x (~$100/mo)         | 0.16            |
-| `max_20x`      | Max 20x (~$200/mo)        | 0.08            |
-| `team_premium` | Team Premium (~$125/seat) | 0.20            |
-| `enterprise`   | Enterprise (custom)       | 0.05            |
-| `api`          | API (no subscription)     | 1.00            |
 
 ### Cursor
 

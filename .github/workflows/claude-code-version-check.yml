@@ -10,8 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+    outputs:
+      has-e2e-key: ${{ steps.e2e-key.outputs.present }}
+      new-version: ${{ steps.check.outputs.should-create }}
 
     steps:
+      - name: Check E2E credentials availability
+        id: e2e-key
+        env:
+          KEY: ${{ secrets.REVENIUM_E2E_API_KEY }}
+        run: echo "present=$([ -n "$KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Get latest npm version
         id: latest
         run: |
@@ -73,7 +82,7 @@ jobs:
 
   run-e2e:
     needs: check-version
-    if: needs.check-version.result == 'success' && secrets.REVENIUM_E2E_API_KEY != ''
+    if: needs.check-version.result == 'success' && needs.check-version.outputs.new-version == 'true' && needs.check-version.outputs.has-e2e-key == 'true'
     uses: ./.github/workflows/e2e.yml
     with:
       provider: claude-code

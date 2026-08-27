@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.13] - 2026-08-27
+
+Maintenance release. No functional changes to the CLI.
+
 ## [1.1.12] - 2026-08-17
 
 ### Removed
@@ -21,7 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Ticket attribution hooks for Claude Code (reverted in 1.1.12)
+- Claude Code ticket launcher and local ticket gate with branch inference,
+  explicit in-session switching, required opt-out reasons, organization ticket
+  patterns, configurable blocking policy, and managed-settings deployment.
+- Session-attribution client for the synchronous management API, including an
+  optional `REVENIUM_TEAM_ID` compatibility override.
+
+### Fixed
+
+- Keep concurrent Claude Code sessions isolated when they share a working
+  directory, and retry unconfirmed attribution writes without allowing stale
+  network workers to overwrite active session state.
+- Make attribution retries idempotent after a response is lost.
 
 ## [1.1.10] - 2026-07-30
 
@@ -38,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Global rate limiter: move `enforceRateLimit` into `sendOtlpRequest` so all providers (Claude Code, Cursor, Copilot, Codex) get automatic pacing without manual wiring
-- Cursor `backfill` now paces its Cursor Admin API fetches (default ~8 req/min, under Cursor's documented 60 req/min limit for `/teams/filtered-usage-events`) so historical pulls no longer trip Cursor's rate limiter (429). Tunable via `--fetch-delay <ms>` or `CURSOR_MIN_REQUEST_INTERVAL_MS` (BACK-2319)
+- Cursor `backfill` now paces its Cursor Admin API fetches (default ~8 req/min, under Cursor's documented 60 req/min limit for `/teams/filtered-usage-events`) so historical pulls no longer trip Cursor's rate limiter (429). Tunable via `--fetch-delay <ms>` or `CURSOR_MIN_REQUEST_INTERVAL_MS`
 - Cursor fetch client now uses jittered exponential backoff and honors the `Retry-After` header defensively on retryable responses, matching the Revenium send path
 
 ## [1.1.8] - 2026-07-15
@@ -257,6 +272,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.1.13]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.13
 [1.1.12]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.12
 [1.1.11]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.11
 [1.1.10]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.10

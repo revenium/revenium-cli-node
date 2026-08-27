@@ -4,6 +4,7 @@ import {
   parseOtelResourceAttributes,
   extractBaseEndpoint,
   getFullOtlpEndpoint,
+  getManagementEndpoint,
 } from "../../../src/_core/config/loader.js";
 
 describe("parseEnvContent", () => {
@@ -110,6 +111,35 @@ describe("getFullOtlpEndpoint", () => {
   it("strips trailing slash before appending", () => {
     expect(getFullOtlpEndpoint("https://api.revenium.ai/")).toBe(
       "https://api.revenium.ai/meter/v2/otlp",
+    );
+  });
+});
+
+describe("getManagementEndpoint", () => {
+  it("defaults to <origin>/profitstream when no override is given", () => {
+    expect(getManagementEndpoint("https://api.dev.revenium.test")).toBe(
+      "https://api.dev.revenium.test/profitstream",
+    );
+  });
+
+  it("strips a trailing slash from the origin before appending the default suffix", () => {
+    expect(getManagementEndpoint("https://api.dev.revenium.test/")).toBe(
+      "https://api.dev.revenium.test/profitstream",
+    );
+  });
+
+  it("uses an explicit override verbatim (trailing slash stripped), ignoring the origin", () => {
+    expect(
+      getManagementEndpoint("https://api.dev.revenium.test", "https://mgmt.example.com/"),
+    ).toBe("https://mgmt.example.com");
+  });
+
+  it("falls back to the default when the override is an empty or whitespace-only string", () => {
+    expect(getManagementEndpoint("https://api.dev.revenium.test", "")).toBe(
+      "https://api.dev.revenium.test/profitstream",
+    );
+    expect(getManagementEndpoint("https://api.dev.revenium.test", "   ")).toBe(
+      "https://api.dev.revenium.test/profitstream",
     );
   });
 });

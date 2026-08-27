@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeFile, mkdir, chmod } from "node:fs/promises";
 import {
-  CLAUDE_CONFIG_DIR,
+  CLAUDE_HOME_DIR_NAME,
   ENV_VARS,
   MIDDLEWARE_SOURCE_KEY,
   MIDDLEWARE_SOURCE_CLI,
@@ -17,20 +17,13 @@ import { getFullOtlpEndpoint } from "./loader.js";
 import type { ClaudeCodeConfig } from "./loader.js";
 
 function getClaudeConfigDir(): string {
-  return join(homedir(), CLAUDE_CONFIG_DIR);
+  return join(homedir(), CLAUDE_HOME_DIR_NAME);
 }
 
-// Shared OTEL_RESOURCE_ATTRIBUTES pairs for the bash and fish writers; always stamps the marker.
 function buildResourceAttributePairs(config: ClaudeCodeConfig): string[] {
   const resourceAttrs: string[] = [
     `${MIDDLEWARE_SOURCE_KEY}=${escapeResourceAttributeValue(MIDDLEWARE_SOURCE_CLI)}`,
   ];
-
-  if (config.subscriptionTier) {
-    resourceAttrs.push(
-      `CLAUDE_CODE_SUBSCRIPTION_TIER=${escapeResourceAttributeValue(config.subscriptionTier)}`,
-    );
-  }
 
   if (config.email) {
     resourceAttrs.push(`user.email=${escapeResourceAttributeValue(config.email)}`);
@@ -69,21 +62,21 @@ export function generateEnvContent(config: ClaudeCodeConfig): string {
     lines.push(`export ${ENV_VARS.SUBSCRIBER_EMAIL}=${escapeDoubleQuotedShellValue(config.email)}`);
   }
 
-  if (config.subscriptionTier) {
-    lines.push("");
-    lines.push(
-      `export ${ENV_VARS.SUBSCRIPTION}=${escapeDoubleQuotedShellValue(config.subscriptionTier)}`,
-    );
-
-    lines.push("");
-    lines.push(
-      `export ${ENV_VARS.SUBSCRIPTION_TIER}=${escapeDoubleQuotedShellValue(config.subscriptionTier)}`,
-    );
-  }
-
   if (config.extraUsageEnabled !== undefined) {
     lines.push("");
     lines.push(`export ${ENV_VARS.EXTRA_USAGE_ENABLED}=${config.extraUsageEnabled ? 1 : 0}`);
+  }
+
+  if (config.teamId) {
+    lines.push("");
+    lines.push(`export ${ENV_VARS.TEAM_ID}=${escapeDoubleQuotedShellValue(config.teamId)}`);
+  }
+
+  if (config.managementEndpoint) {
+    lines.push("");
+    lines.push(
+      `export ${ENV_VARS.MGMT_ENDPOINT}=${escapeDoubleQuotedShellValue(config.managementEndpoint)}`,
+    );
   }
 
   const resourceAttrs = buildResourceAttributePairs(config);
@@ -114,17 +107,19 @@ export function generateFishContent(config: ClaudeCodeConfig): string {
     lines.push(`set -gx ${ENV_VARS.SUBSCRIBER_EMAIL} ${escapeFishValue(config.email)}`);
   }
 
-  if (config.subscriptionTier) {
-    lines.push("");
-    lines.push(`set -gx ${ENV_VARS.SUBSCRIPTION} ${escapeFishValue(config.subscriptionTier)}`);
-
-    lines.push("");
-    lines.push(`set -gx ${ENV_VARS.SUBSCRIPTION_TIER} ${escapeFishValue(config.subscriptionTier)}`);
-  }
-
   if (config.extraUsageEnabled !== undefined) {
     lines.push("");
     lines.push(`set -gx ${ENV_VARS.EXTRA_USAGE_ENABLED} ${config.extraUsageEnabled ? 1 : 0}`);
+  }
+
+  if (config.teamId) {
+    lines.push("");
+    lines.push(`set -gx ${ENV_VARS.TEAM_ID} ${escapeFishValue(config.teamId)}`);
+  }
+
+  if (config.managementEndpoint) {
+    lines.push("");
+    lines.push(`set -gx ${ENV_VARS.MGMT_ENDPOINT} ${escapeFishValue(config.managementEndpoint)}`);
   }
 
   const resourceAttrs = buildResourceAttributePairs(config);

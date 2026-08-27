@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Above 2x waitForFile's budget — some hook tests wait on two detached spawns in one test.
+    testTimeout: 45000,
     include: ["tests/**/*.test.ts"],
     coverage: {
       provider: "v8",

@@ -115,7 +115,8 @@ export function createOtlpCaptureServer(): OtlpCaptureServer {
       requestResolvers = [];
     },
 
-    waitForRequests(count: number, timeoutMs = 5000): Promise<CapturedRequest[]> {
+    // Currently uncalled; 5000 sat exactly at vitest's old default cap, so it could never fire.
+    waitForRequests(count: number, timeoutMs = 15000): Promise<CapturedRequest[]> {
       if (requests.length >= count) {
         return Promise.resolve(requests.slice(0, count));
       }
