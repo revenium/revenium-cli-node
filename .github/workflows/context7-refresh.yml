@@ -45,12 +45,12 @@ jobs:
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY_REVENIUM }}
           LIBRARY_ID: ${{ inputs.library-id }}
         run: |
-          payload=$(jq -n --arg id "$LIBRARY_ID" '{"libraryId": $id}')
+          payload=$(jq -n --arg id "$LIBRARY_ID" '{"libraryName": $id}')
 
           response=$(curl -s -w "\n%{http_code}" \
             --max-time 30 \
             --retry 2 --retry-delay 5 --retry-max-time 60 \
-            -X POST "https://context7.com/api/v2/refresh" \
+            -X POST "https://context7.com/api/v1/refresh" \
             -H "Authorization: Bearer ${CONTEXT7_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$payload")
