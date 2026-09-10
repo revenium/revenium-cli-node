@@ -1,8 +1,8 @@
 import type { SubscriptionTier } from "./constants.js";
 
 export interface CopilotConfig {
-  githubToken: string;
-  githubOrg: string;
+  githubToken?: string;
+  githubOrg?: string;
   reveniumApiKey: string;
   reveniumEndpoint: string;
   email?: string;

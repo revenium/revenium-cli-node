@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { writeFile, mkdir, chmod } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, writeFile, mkdir, chmod, rename, unlink } from "node:fs/promises";
 import {
   CLAUDE_HOME_DIR_NAME,
   ENV_VARS,
@@ -13,7 +14,8 @@ import {
   escapeFishValue,
   escapeResourceAttributeValue,
 } from "../../_core/shell/escaping.js";
-import { getFullOtlpEndpoint } from "./loader.js";
+import { parseEnvContent } from "../../_core/config/loader.js";
+import { getConfigPath, getFishConfigPath, getFullOtlpEndpoint } from "./loader.js";
 import type { ClaudeCodeConfig } from "./loader.js";
 
 function getClaudeConfigDir(): string {
@@ -55,6 +57,11 @@ export function generateEnvContent(config: ClaudeCodeConfig): string {
     `export ${ENV_VARS.OTLP_PROTOCOL}=http/json`,
     "",
     "export OTEL_LOGS_EXPORTER=otlp",
+    "",
+    // Claude Code redacts skill names on skill_activated unless tool details are logged, which
+    // leaves plugin skills unattributable in Revenium. Also exports tool inputs (Bash command
+    // text, MCP tool names); never prompts or model output.
+    `export ${ENV_VARS.LOG_TOOL_DETAILS}=${config.logToolDetails === false ? 0 : 1}`,
   ];
 
   if (config.email) {
@@ -100,6 +107,8 @@ export function generateFishContent(config: ClaudeCodeConfig): string {
     `set -gx ${ENV_VARS.OTLP_PROTOCOL} http/json`,
     "",
     "set -gx OTEL_LOGS_EXPORTER otlp",
+    "",
+    `set -gx ${ENV_VARS.LOG_TOOL_DETAILS} ${config.logToolDetails === false ? 0 : 1}`,
   ];
 
   if (config.email) {
@@ -152,4 +161,80 @@ export async function writeConfig(
 
 export function getConfigFilePath(): string {
   return join(getClaudeConfigDir(), REVENIUM_ENV_FILE);
+}
+
+export type ToolDetailsUpgradeStatus = "added" | "already-set" | "no-file";
+
+export interface ToolDetailsUpgradeResult {
+  path: string;
+  status: ToolDetailsUpgradeStatus;
+}
+
+const TOOL_DETAILS_UPGRADE_COMMENT =
+  "# Added by `revenium-metering status --fix`: without this, Claude Code redacts skill\n" +
+  "# names on skill_activated and Revenium cannot attribute plugin skill usage. It also\n" +
+  "# exports tool inputs (Bash command text, MCP tool names); never prompts or model output.";
+
+function appendToolDetailsLine(content: string, exportLine: string): string {
+  const separator = content.length === 0 || content.endsWith("\n") ? "" : "\n";
+  return `${content}${separator}\n${TOOL_DETAILS_UPGRADE_COMMENT}\n${exportLine}\n`;
+}
+
+/**
+ * Writes `content` to `path` without ever leaving a truncated file behind: the new content lands
+ * in a sibling temp file first, then an atomic rename replaces the original in one step. A crash
+ * or failure mid-write leaves either the old file or the new one intact, never a half-written one.
+ */
+async function atomicWriteFile(path: string, content: string, mode: number): Promise<void> {
+  const tempPath = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(tempPath, content, { encoding: "utf-8", mode });
+    await chmod(tempPath, mode);
+    await rename(tempPath, path);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function upgradeOneFile(path: string, isFish: boolean): Promise<ToolDetailsUpgradeResult> {
+  if (!existsSync(path)) {
+    return { path, status: "no-file" };
+  }
+
+  const content = await readFile(path, "utf-8");
+  const parsed = parseEnvContent(content, isFish);
+
+  // An explicit opt-out (`=0`) is a deliberate choice and is left alone.
+  if (parsed[ENV_VARS.LOG_TOOL_DETAILS] !== undefined) {
+    return { path, status: "already-set" };
+  }
+
+  const exportLine = isFish
+    ? `set -gx ${ENV_VARS.LOG_TOOL_DETAILS} 1`
+    : `export ${ENV_VARS.LOG_TOOL_DETAILS}=1`;
+
+  await atomicWriteFile(path, appendToolDetailsLine(content, exportLine), CONFIG_FILE_MODE);
+
+  return { path, status: "added" };
+}
+
+/**
+ * Adds `OTEL_LOG_TOOL_DETAILS=1` to config files written before the flag existed.
+ * Idempotent: a file that already sets the variable (to any value) is left untouched.
+ *
+ * The fish companion is only upgraded when it resolves to a *different* path than the primary
+ * config. A `REVENIUM_CONFIG_PATH` override without a `.env` suffix has no separate fish file, and
+ * processing the same file twice (once as bash, once as fish) would corrupt it.
+ */
+export async function ensureToolDetailsExport(): Promise<ToolDetailsUpgradeResult[]> {
+  const envPath = getConfigPath();
+  const fishPath = getFishConfigPath(envPath);
+
+  const results = [await upgradeOneFile(envPath, false)];
+  if (fishPath !== envPath) {
+    results.push(await upgradeOneFile(fishPath, true));
+  }
+
+  return results;
 }

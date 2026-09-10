@@ -9,7 +9,6 @@ import { updateShellProfile, getManualInstructions } from "../../_core/shell/pro
 import { detectShell, validateConfigPath } from "../../_core/shell/detector.js";
 import { writeConfig } from "../config/writer.js";
 import { getConfigPath } from "../config/loader.js";
-import { testConnectivity } from "../core/github-client.js";
 import {
   DEFAULT_SYNC_INTERVAL_MS,
   SERVICE_NAME,
@@ -21,8 +20,6 @@ import type { CopilotConfig } from "../types.js";
 import type { ShellType } from "../../_core/types/index.js";
 
 interface SetupOptions {
-  githubToken?: string;
-  githubOrg?: string;
   reveniumApiKey?: string;
   email?: string;
   organizationName?: string;
@@ -49,49 +46,11 @@ function getConfigFilePath(): string {
   return getConfigPath();
 }
 
-function validateGithubToken(token: string): { valid: boolean; errors: string[] } {
-  const errors: string[] = [];
-
-  if (!token || token.trim() === "") {
-    errors.push("GitHub token is required");
-    return { valid: false, errors };
-  }
-
-  if (!token.startsWith("ghp_") && !token.startsWith("github_pat_")) {
-    errors.push("GitHub token should start with ghp_ or github_pat_");
-  }
-
-  if (token.length < 10) {
-    errors.push("GitHub token appears too short");
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
 export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   console.log(chalk.bold("\nRevenium GitHub Copilot Metering Setup\n"));
-  console.log(chalk.dim("This wizard will configure GitHub Copilot usage sync to Revenium.\n"));
+  console.log(chalk.dim("This wizard configures the Revenium credentials the CLI needs.\n"));
 
   const config = await collectConfiguration(options);
-
-  const githubSpinner = ora("Testing GitHub Copilot API connectivity...").start();
-
-  try {
-    const githubOk = await testConnectivity(config.githubToken, config.githubOrg);
-
-    if (!githubOk) {
-      githubSpinner.fail("GitHub Copilot API connectivity failed");
-      console.log(chalk.yellow("\nPlease check your GitHub token and organization name."));
-      console.log(chalk.dim("Token needs manage_billing:copilot or read:org scope."));
-      process.exit(1);
-    }
-
-    githubSpinner.succeed("GitHub Copilot API connected");
-  } catch (error) {
-    githubSpinner.fail("Failed to connect to GitHub Copilot API");
-    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));
-    process.exit(1);
-  }
 
   const reveniumSpinner = ora("Testing Revenium API key...").start();
 
@@ -168,13 +127,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 }
 
 async function collectConfiguration(options: SetupOptions): Promise<CopilotConfig> {
-  const nonInteractive = !!(
-    options.githubToken &&
-    options.githubOrg &&
-    options.reveniumApiKey &&
-    options.endpoint &&
-    options.subscriptionTier
-  );
+  const nonInteractive = !!(options.reveniumApiKey && options.endpoint && options.subscriptionTier);
 
   const tierChoices = SUBSCRIPTION_TIERS.map((tier) => ({
     name: SUBSCRIPTION_TIER_CONFIG[tier].name,
@@ -184,28 +137,6 @@ async function collectConfiguration(options: SetupOptions): Promise<CopilotConfi
   const answers: Record<string, string> = nonInteractive
     ? {}
     : await inquirer.prompt([
-        {
-          type: "password",
-          name: "githubToken",
-          message: "Enter your GitHub personal access token:",
-          when: !options.githubToken,
-          validate: (input: string) => {
-            const result = validateGithubToken(input);
-            return result.valid || result.errors.join(", ");
-          },
-          mask: "*",
-        },
-        {
-          type: "input",
-          name: "githubOrg",
-          message: "Enter your GitHub organization slug:",
-          when: !options.githubOrg,
-          validate: (input: string) => {
-            if (!input || input.trim() === "") return "Organization slug is required";
-            if (!/^[a-zA-Z0-9_-]+$/.test(input)) return "Invalid organization slug format";
-            return true;
-          },
-        },
         {
           type: "password",
           name: "reveniumApiKey",
@@ -303,8 +234,6 @@ async function collectConfiguration(options: SetupOptions): Promise<CopilotConfi
       : undefined;
 
   return {
-    githubToken: options.githubToken || answers.githubToken,
-    githubOrg: options.githubOrg || answers.githubOrg,
     reveniumApiKey: options.reveniumApiKey || answers.reveniumApiKey,
     reveniumEndpoint: endpoint,
     email: options.email || answers.email?.trim() || undefined,
@@ -320,8 +249,6 @@ function printSuccessMessage(config: CopilotConfig): void {
   console.log("\n" + chalk.green.bold("Setup complete!") + "\n");
 
   console.log(chalk.bold("Configuration:"));
-  console.log(`  GitHub Token:     ${maskApiKey(config.githubToken)}`);
-  console.log(`  GitHub Org:       ${config.githubOrg}`);
   console.log(`  Revenium API Key: ${maskApiKey(config.reveniumApiKey)}`);
   console.log(`  Endpoint:         ${config.reveniumEndpoint}`);
   if (config.subscriptionTier) {
@@ -339,12 +266,19 @@ function printSuccessMessage(config: CopilotConfig): void {
   console.log(`  Sync Interval:    ${config.syncIntervalMs / 1000 / 60} minutes`);
 
   console.log("\n" + chalk.yellow.bold("Next steps:"));
-  console.log("  1. Run `revenium-copilot sync` to trigger an immediate sync");
-  console.log("  2. Run `revenium-copilot sync --watch` for continuous syncing");
-  console.log("  3. Run `revenium-copilot backfill --since 28d` to import historical data");
+  console.log(
+    "  1. Register your GitHub credential under Connections > Providers > GitHub Copilot in the Revenium dashboard",
+  );
+  console.log("  2. Revenium then refreshes Copilot usage once daily — nothing to keep running");
+  console.log(
+    "  3. To import history, run `revenium-copilot backfill --since 28d` with --github-token and --github-org",
+  );
   console.log("  4. Check your usage at https://app.revenium.ai");
 
   console.log(
-    "\n" + chalk.dim("Run `revenium-copilot status` to verify the configuration at any time."),
+    "\n" +
+      chalk.dim(
+        "This wizard never stores your GitHub token. Run `revenium-copilot status` to verify the configuration at any time.",
+      ),
   );
 }

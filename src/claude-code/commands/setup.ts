@@ -24,6 +24,8 @@ export interface SetupOptions {
   skipShellUpdate?: boolean;
   extraUsageEnabled?: boolean;
 
+  logToolDetails?: boolean;
+
   teamId?: string;
 
   managementEndpoint?: string;
@@ -169,6 +171,7 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
     organizationName: options.organizationName,
     productName: options.productName,
     extraUsageEnabled: options.extraUsageEnabled,
+    logToolDetails: options.logToolDetails,
     teamId: options.teamId,
     managementEndpoint: options.managementEndpoint,
   };

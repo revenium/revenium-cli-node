@@ -19,8 +19,6 @@ program
 program
   .command("setup")
   .description("Interactive setup wizard to configure GitHub Copilot metering")
-  .option("--github-token <token>", "GitHub personal access token")
-  .option("--github-org <org>", "GitHub organization slug")
   .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-o, --organization <name>", "Organization name for cost attribution")
@@ -43,8 +41,6 @@ program
     }
 
     await setupCommand({
-      githubToken: options.githubToken,
-      githubOrg: options.githubOrg,
       reveniumApiKey: options.apiKey,
       email: options.email,
       organizationName: options.organization,
@@ -72,17 +68,21 @@ program
 
 program
   .command("sync")
-  .description("Sync GitHub Copilot usage events to Revenium")
+  .description("Sync GitHub Copilot usage events to Revenium (deprecated)")
   .option("-w, --watch", "Run continuously with configured interval")
   .option("--from <date>", "Start date for sync range (YYYY-MM-DD)")
   .option("--to <date>", "End date for sync range (YYYY-MM-DD)")
   .option("--dry-run", "Output OTLP JSON without sending data")
+  .option("--github-token <token>", "GitHub personal access token (or set GITHUB_TOKEN)")
+  .option("--github-org <org>", "GitHub organization slug (or set GITHUB_ORG)")
   .action(async (options) => {
     await syncCommand({
       watch: options.watch,
       from: options.from,
       to: options.to,
       dryRun: options.dryRun,
+      githubToken: options.githubToken,
+      githubOrg: options.githubOrg,
     });
   });
 
@@ -104,6 +104,8 @@ program
   .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
   .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
   .option("-v, --verbose", "Show detailed output")
+  .option("--github-token <token>", "GitHub personal access token (or set GITHUB_TOKEN)")
+  .option("--github-org <org>", "GitHub organization slug (or set GITHUB_ORG)")
   .action(async (options) => {
     const batchSize = parseInt(options.batchSize, 10);
     if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 100) {
@@ -128,6 +130,8 @@ program
       batchSize,
       delay,
       verbose: options.verbose,
+      githubToken: options.githubToken,
+      githubOrg: options.githubOrg,
     });
   });
 

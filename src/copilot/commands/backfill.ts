@@ -1,6 +1,12 @@
 import chalk from "chalk";
 import ora from "ora";
 import { loadConfig, configExists } from "../config/loader.js";
+import {
+  GITHUB_CREDENTIAL_HINT,
+  GITHUB_CREDENTIAL_MISSING_MESSAGE,
+  type GithubCredentialOverrides,
+  resolveGithubCredential,
+} from "../config/github-credential.js";
 import { fetchUsageDays } from "../core/github-client.js";
 import { buildOtlpPayload, isValidDay } from "../core/transform/otlp-mapper.js";
 import { computeBreakdownHash, Deduplicator } from "../core/sync/deduplicator.js";
@@ -9,7 +15,7 @@ import { sendTracesWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
 import type { CopilotUsageDay } from "../types.js";
 
-export interface BackfillOptions {
+export interface BackfillOptions extends GithubCredentialOverrides {
   since?: string;
   to?: string;
   dryRun?: boolean;
@@ -103,6 +109,13 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     process.exit(1);
   }
 
+  const githubCredential = resolveGithubCredential(config, options);
+  if (!githubCredential) {
+    console.log(chalk.red(GITHUB_CREDENTIAL_MISSING_MESSAGE));
+    console.log(chalk.yellow(GITHUB_CREDENTIAL_HINT));
+    process.exit(1);
+  }
+
   let sinceDate: Date;
   if (since) {
     const parsed = parseSinceDate(since);
@@ -135,8 +148,8 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
 
   try {
     for await (const batch of fetchUsageDays(
-      config.githubToken,
-      config.githubOrg,
+      githubCredential.token,
+      githubCredential.orgName,
       formatDateParam(sinceDate),
       formatDateParam(toDate),
     )) {

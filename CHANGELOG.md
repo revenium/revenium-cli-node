@@ -5,7 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-10
+
+### Added
+
+- `revenium-metering setup` writes `OTEL_LOG_TOOL_DETAILS=1` to `~/.claude/revenium.env` and
+  `~/.claude/revenium.fish`. Claude Code redacts the skill name on its `skill_activated` telemetry
+  event without it, so plugin skill usage reached Revenium as an unnamed `custom_skill`. The flag
+  also exports tool inputs (for example `Bash` command text and MCP tool names); it does not export
+  prompts or model output. Pass `--no-log-tool-details` to opt out.
+- `revenium-metering status --fix` appends `OTEL_LOG_TOOL_DETAILS=1` to a config written before the
+  flag existed. Idempotent, and it leaves an explicit `OTEL_LOG_TOOL_DETAILS=0` opt-out alone.
+- `revenium-metering status` reports skill name attribution, e.g.
+  `Skill names: redacted (OTEL_LOG_TOOL_DETAILS unset)`, distinguishing a config that lacks the flag
+  from a shell that has not sourced it.
+
+### Deprecated
+
+- `revenium-copilot sync` and `revenium-cursor sync` (including `--watch`). Both will be removed in
+  `2.0.0`. Register the credential under Connections > Providers in the Revenium dashboard instead;
+  Revenium then syncs it server-side with no local process left running. `backfill`, `status`,
+  `test` and `reset` are unaffected.
+
+### Changed
+
+- `revenium-copilot setup` no longer prompts for or stores a GitHub personal access token. The
+  Copilot credential is managed in the Revenium dashboard. CLI commands that read the GitHub API
+  (`backfill`, `sync`) now take it per invocation via `--github-token` / `--github-org` or the
+  `GITHUB_TOKEN` / `GITHUB_ORG` environment variables, and fail with an actionable message when it
+  is absent.
+- `revenium-copilot status` reports the GitHub connectivity check only when a GitHub credential is
+  supplied, and explains where the credential lives otherwise.
+
+### Removed
+
+- `--github-token` and `--github-org` options on `revenium-copilot setup`, and the setup-time GitHub
+  connectivity gate.
 
 ## [1.1.13] - 2026-08-27
 
@@ -272,6 +307,7 @@ Maintenance release. No functional changes to the CLI.
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.2.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.2.0
 [1.1.13]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.13
 [1.1.12]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.12
 [1.1.11]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.11

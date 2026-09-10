@@ -45,8 +45,6 @@ export function createSyncState(overrides: Partial<SyncState> = {}): SyncState {
 
 export function createCopilotConfig(overrides: Partial<CopilotConfig> = {}): CopilotConfig {
   return {
-    githubToken: "ghp_test1234567890abcdef",
-    githubOrg: "test-org",
     reveniumApiKey: "hak_tenant_abc123xyz",
     reveniumEndpoint: "https://api.revenium.ai",
     syncIntervalMs: 300000,

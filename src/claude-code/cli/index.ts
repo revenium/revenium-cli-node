@@ -18,6 +18,7 @@ interface CliSetupOptions {
   teamId?: string;
   skipShellUpdate?: boolean;
   extraUsageEnabled?: boolean;
+  logToolDetails?: boolean;
   mgmtEndpoint?: string;
 }
 
@@ -31,6 +32,8 @@ export function toSetupOptions(options: CliSetupOptions): SetupOptions {
     teamId: options.teamId,
     skipShellUpdate: options.skipShellUpdate,
     extraUsageEnabled: options.extraUsageEnabled || undefined,
+    // Commander sets this to false only when `--no-log-tool-details` is passed.
+    logToolDetails: options.logToolDetails === false ? false : undefined,
     managementEndpoint: options.mgmtEndpoint,
   };
 }
@@ -59,6 +62,11 @@ program
   )
   .option("--skip-shell-update", "Skip automatic shell profile update")
   .option("--extra-usage-enabled", "Set CLAUDE_CODE_EXTRA_USAGE_ENABLED=1 in SDK config")
+  .option(
+    "--no-log-tool-details",
+    "Write OTEL_LOG_TOOL_DETAILS=0 instead of 1. Claude Code then redacts skill names on " +
+      "skill_activated and Revenium cannot attribute plugin skill usage",
+  )
   .action(async (options: CliSetupOptions) => {
     await setupCommand(toSetupOptions(options));
   });
@@ -66,8 +74,12 @@ program
 program
   .command("status")
   .description("Check current configuration and endpoint connectivity")
-  .action(async () => {
-    await statusCommand();
+  .option(
+    "--fix",
+    "Add OTEL_LOG_TOOL_DETAILS=1 to an existing config that predates the flag (idempotent)",
+  )
+  .action(async (options: { fix?: boolean }) => {
+    await statusCommand({ fix: options.fix });
   });
 
 program
