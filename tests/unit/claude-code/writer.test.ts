@@ -266,3 +266,27 @@ describe("generateFishContent — mirrors bash content semantically", () => {
     expect(output).not.toContain("user.email=");
   });
 });
+
+describe("generateEnvContent: skill name attribution", () => {
+  it("enables OTEL_LOG_TOOL_DETAILS by default so Claude Code reports skill names", () => {
+    expect(generateEnvContent(minimalConfig)).toContain("export OTEL_LOG_TOOL_DETAILS=1");
+  });
+
+  it("writes OTEL_LOG_TOOL_DETAILS=0 when the operator opts out", () => {
+    const output = generateEnvContent({ ...minimalConfig, logToolDetails: false });
+    expect(output).toContain("export OTEL_LOG_TOOL_DETAILS=0");
+    expect(output).not.toContain("export OTEL_LOG_TOOL_DETAILS=1");
+  });
+});
+
+describe("generateFishContent: skill name attribution", () => {
+  it("enables OTEL_LOG_TOOL_DETAILS by default", () => {
+    expect(generateFishContent(minimalConfig)).toContain("set -gx OTEL_LOG_TOOL_DETAILS 1");
+  });
+
+  it("writes OTEL_LOG_TOOL_DETAILS 0 when the operator opts out", () => {
+    const output = generateFishContent({ ...minimalConfig, logToolDetails: false });
+    expect(output).toContain("set -gx OTEL_LOG_TOOL_DETAILS 0");
+    expect(output).not.toContain("set -gx OTEL_LOG_TOOL_DETAILS 1");
+  });
+});

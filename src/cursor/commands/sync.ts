@@ -3,6 +3,7 @@ import ora from "ora";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { printSyncDeprecationNotice } from "../../_core/ui/deprecation.js";
 import { loadConfig, configExists } from "../config/loader.js";
 import { runSyncCycle, SyncWatcher } from "../core/sync/scheduler.js";
 import { LOCK_FILE } from "../constants.js";
@@ -52,6 +53,11 @@ function formatResult(result: SyncResult): string {
 }
 
 export async function syncCommand(options: SyncOptions = {}): Promise<void> {
+  printSyncDeprecationNotice({
+    command: "revenium-cursor sync",
+    dashboardPath: "Connections > Providers > Cursor",
+  });
+
   if (!configExists()) {
     console.log(chalk.red("Configuration not found"));
     console.log(chalk.yellow("Run `revenium-cursor setup` first to configure the integration."));

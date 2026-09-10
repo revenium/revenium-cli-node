@@ -5,6 +5,7 @@ import { buildOtlpPayload, isValidDay } from "../transform/otlp-mapper.js";
 import { loadState, saveState } from "./state-manager.js";
 import { Deduplicator, computeBreakdownHash } from "./deduplicator.js";
 import { DEFAULT_OVERLAP_DAYS, MAX_EVENTS_PER_BATCH } from "../../constants.js";
+import type { GithubCredential } from "../../config/github-credential.js";
 import type { CopilotConfig, CopilotUsageDay, SyncResult } from "../../types.js";
 
 function formatDate(ms: number): string {
@@ -13,6 +14,7 @@ function formatDate(ms: number): string {
 
 export async function runSyncCycle(
   config: CopilotConfig,
+  githubCredential: GithubCredential,
   fromOverride?: string,
   toOverride?: string,
   dryRun = false,
@@ -47,7 +49,12 @@ export async function runSyncCycle(
   const dryRunPayloads: object[] = [];
 
   try {
-    for await (const batch of fetchUsageDays(config.githubToken, config.githubOrg, since, until)) {
+    for await (const batch of fetchUsageDays(
+      githubCredential.token,
+      githubCredential.orgName,
+      since,
+      until,
+    )) {
       for (const day of batch) {
         if (!isValidDay(day.day)) continue;
 
@@ -143,7 +150,10 @@ export class SyncWatcher {
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
   private resolveWait: (() => void) | null = null;
 
-  constructor(private config: CopilotConfig) {}
+  constructor(
+    private config: CopilotConfig,
+    private githubCredential: GithubCredential,
+  ) {}
 
   async start(
     onCycle?: (result: SyncResult) => void,
@@ -154,7 +164,7 @@ export class SyncWatcher {
 
     while (this.running) {
       try {
-        const { result } = await runSyncCycle(this.config);
+        const { result } = await runSyncCycle(this.config, this.githubCredential);
         onCycle?.(result);
       } catch (error) {
         onError?.(error instanceof Error ? error : new Error(String(error)));

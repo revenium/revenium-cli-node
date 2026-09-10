@@ -35,11 +35,9 @@ export async function loadConfig(): Promise<CopilotConfig | null> {
     const content = await readFile(configPath, "utf-8");
     const env = parseEnvContent(content);
 
-    const githubToken = env[ENV_KEYS.GITHUB_TOKEN];
-    const githubOrg = env[ENV_KEYS.GITHUB_ORG];
     const reveniumApiKey = env[ENV_KEYS.REVENIUM_API_KEY];
 
-    if (!githubToken || !githubOrg || !reveniumApiKey) {
+    if (!reveniumApiKey) {
       return null;
     }
 
@@ -53,8 +51,8 @@ export async function loadConfig(): Promise<CopilotConfig | null> {
     }
 
     return {
-      githubToken,
-      githubOrg,
+      githubToken: process.env[ENV_KEYS.GITHUB_TOKEN] || env[ENV_KEYS.GITHUB_TOKEN] || undefined,
+      githubOrg: process.env[ENV_KEYS.GITHUB_ORG] || env[ENV_KEYS.GITHUB_ORG] || undefined,
       reveniumApiKey,
       reveniumEndpoint: env[ENV_KEYS.REVENIUM_ENDPOINT] || DEFAULT_REVENIUM_URL,
       email: env[ENV_KEYS.SUBSCRIBER_EMAIL] || undefined,

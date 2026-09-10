@@ -4,12 +4,20 @@ import { writeFile, unlink } from "node:fs/promises";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { printSyncDeprecationNotice } from "../../_core/ui/deprecation.js";
 import { loadConfig, configExists } from "../config/loader.js";
+import {
+  GITHUB_CREDENTIAL_HINT,
+  GITHUB_CREDENTIAL_MISSING_MESSAGE,
+  type GithubCredential,
+  type GithubCredentialOverrides,
+  resolveGithubCredential,
+} from "../config/github-credential.js";
 import { runSyncCycle, SyncWatcher } from "../core/sync/scheduler.js";
 import { LOCK_FILE } from "../constants.js";
 import type { CopilotConfig, SyncResult } from "../types.js";
 
-interface SyncOptions {
+interface SyncOptions extends GithubCredentialOverrides {
   watch?: boolean;
   from?: string;
   to?: string;
@@ -51,6 +59,11 @@ function formatResult(result: SyncResult): string {
 }
 
 export async function syncCommand(options: SyncOptions = {}): Promise<void> {
+  printSyncDeprecationNotice({
+    command: "revenium-copilot sync",
+    dashboardPath: "Connections > Providers > GitHub Copilot",
+  });
+
   if (!configExists()) {
     console.log(chalk.red("Configuration not found"));
     console.log(chalk.yellow("Run `revenium-copilot setup` first to configure the integration."));
@@ -60,6 +73,13 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
   const config = await loadConfig();
   if (!config) {
     console.log(chalk.red("Could not load configuration"));
+    process.exit(1);
+  }
+
+  const githubCredential = resolveGithubCredential(config, options);
+  if (!githubCredential) {
+    console.log(chalk.red(GITHUB_CREDENTIAL_MISSING_MESSAGE));
+    console.log(chalk.yellow(GITHUB_CREDENTIAL_HINT));
     process.exit(1);
   }
 
@@ -87,14 +107,15 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
   process.on("exit", syncReleaseLock);
 
   if (options.watch) {
-    await runWatchMode(config, cleanup);
+    await runWatchMode(config, githubCredential, cleanup);
   } else {
-    await runOnceMode(config, options, cleanup);
+    await runOnceMode(config, githubCredential, options, cleanup);
   }
 }
 
 async function runOnceMode(
   config: CopilotConfig,
+  githubCredential: GithubCredential,
   options: SyncOptions,
   cleanup: () => Promise<void>,
 ): Promise<void> {
@@ -122,7 +143,13 @@ async function runOnceMode(
   const spinner = ora("Syncing usage data...").start();
 
   try {
-    const { result, dryRunPayloads } = await runSyncCycle(config, fromDate, toDate, options.dryRun);
+    const { result, dryRunPayloads } = await runSyncCycle(
+      config,
+      githubCredential,
+      fromDate,
+      toDate,
+      options.dryRun,
+    );
     spinner.succeed(`Sync complete: ${formatResult(result)}`);
 
     if (options.dryRun && dryRunPayloads && dryRunPayloads.length > 0) {
@@ -146,7 +173,11 @@ async function runOnceMode(
   console.log("");
 }
 
-async function runWatchMode(config: CopilotConfig, cleanup: () => Promise<void>): Promise<void> {
+async function runWatchMode(
+  config: CopilotConfig,
+  githubCredential: GithubCredential,
+  cleanup: () => Promise<void>,
+): Promise<void> {
   console.log(chalk.bold("\nRevenium GitHub Copilot Sync (Watch Mode)\n"));
   console.log(
     chalk.dim(
@@ -154,7 +185,7 @@ async function runWatchMode(config: CopilotConfig, cleanup: () => Promise<void>)
     ),
   );
 
-  const watcher = new SyncWatcher(config);
+  const watcher = new SyncWatcher(config, githubCredential);
   let stopping = false;
 
   const shutdown = async () => {

@@ -14,7 +14,12 @@ vi.mock("node:os", () => ({
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { loadConfig, getConfigPath } from "../../../src/claude-code/config/loader.js";
+import {
+  loadConfig,
+  getConfigPath,
+  getFishConfigPath,
+  isToolDetailsExplicitlyDisabled,
+} from "../../../src/claude-code/config/loader.js";
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFile = vi.mocked(readFile);
@@ -192,5 +197,73 @@ describe("getConfigPath — REVENIUM_CONFIG_PATH override", () => {
     expect(getConfigPath()).toContain("revenium.env");
     delete process.env.REVENIUM_CONFIG_PATH;
     expect(getConfigPath()).toContain("revenium.env");
+  });
+});
+
+describe("loadConfig: OTEL_LOG_TOOL_DETAILS", () => {
+  it("reads the flag as enabled when the config sets it to 1", async () => {
+    mockReadFile.mockResolvedValue(
+      buildEnvContent({ OTEL_LOG_TOOL_DETAILS: "1" }) as unknown as Buffer,
+    );
+
+    const config = await loadConfig();
+    expect(config?.logToolDetails).toBe(true);
+  });
+
+  it("reads the flag as a deliberate opt-out when the config sets it to 0", async () => {
+    mockReadFile.mockResolvedValue(
+      buildEnvContent({ OTEL_LOG_TOOL_DETAILS: "0" }) as unknown as Buffer,
+    );
+
+    const config = await loadConfig();
+    expect(config?.logToolDetails).toBe(false);
+  });
+
+  it("leaves the flag undefined for a config written before it existed", async () => {
+    mockReadFile.mockResolvedValue(buildEnvContent() as unknown as Buffer);
+
+    const config = await loadConfig();
+    expect(config?.logToolDetails).toBeUndefined();
+  });
+});
+
+describe("getFishConfigPath", () => {
+  it("swaps the .env suffix for .fish on the standard path", () => {
+    expect(getFishConfigPath("/home/testuser/.claude/revenium.env")).toBe(
+      "/home/testuser/.claude/revenium.fish",
+    );
+  });
+
+  it("returns the same path unchanged for a REVENIUM_CONFIG_PATH override without a .env suffix", () => {
+    // A custom override has no separate fish file, so callers must treat an unchanged return value
+    // as "no fish companion", not upgrade the same file twice under two shell dialects.
+    expect(getFishConfigPath("/tmp/revenium-local-e2e")).toBe("/tmp/revenium-local-e2e");
+  });
+});
+
+describe("isToolDetailsExplicitlyDisabled", () => {
+  const ORIGINAL = process.env.OTEL_LOG_TOOL_DETAILS;
+
+  afterEach(() => {
+    if (ORIGINAL === undefined) {
+      delete process.env.OTEL_LOG_TOOL_DETAILS;
+    } else {
+      process.env.OTEL_LOG_TOOL_DETAILS = ORIGINAL;
+    }
+  });
+
+  it("is true when the shell explicitly exports 0", () => {
+    process.env.OTEL_LOG_TOOL_DETAILS = "0";
+    expect(isToolDetailsExplicitlyDisabled()).toBe(true);
+  });
+
+  it("is false when the shell exports 1", () => {
+    process.env.OTEL_LOG_TOOL_DETAILS = "1";
+    expect(isToolDetailsExplicitlyDisabled()).toBe(false);
+  });
+
+  it("is false when the shell does not export the flag at all", () => {
+    delete process.env.OTEL_LOG_TOOL_DETAILS;
+    expect(isToolDetailsExplicitlyDisabled()).toBe(false);
   });
 });

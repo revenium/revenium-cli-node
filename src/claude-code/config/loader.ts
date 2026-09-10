@@ -23,6 +23,10 @@ export interface ClaudeCodeConfig {
 
   teamId?: string;
 
+  // Claude Code only emits skill names on skill_activated when OTEL_LOG_TOOL_DETAILS=1.
+  // Undefined means the config file predates the flag; false is a deliberate opt-out.
+  logToolDetails?: boolean;
+
   // Explicit override for the management-plane API base (session attribution, etc.).
   // Undefined means "use the default" — resolved at call time via getManagementEndpoint().
   managementEndpoint?: string;
@@ -48,6 +52,16 @@ export function getConfigPath(): string {
 
 export function configExists(): boolean {
   return existsSync(getConfigPath());
+}
+
+/**
+ * Derives the fish companion path for a config file. Only the standard `.env` naming has a known
+ * fish sibling; a custom `REVENIUM_CONFIG_PATH` override without that suffix has no separate fish
+ * file, so callers must treat an unchanged return value as "no fish file" rather than upgrading
+ * the same file twice under two different shell dialects.
+ */
+export function getFishConfigPath(envPath: string): string {
+  return envPath.endsWith(".env") ? envPath.replace(/\.env$/, ".fish") : envPath;
 }
 
 function extractApiKeyFromHeaders(headers: string): string | undefined {
@@ -78,6 +92,10 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
     const extraUsageEnabled =
       extraUsageEnabledRaw === "1" ? true : extraUsageEnabledRaw === "0" ? false : undefined;
 
+    const logToolDetailsRaw = env[ENV_VARS.LOG_TOOL_DETAILS];
+    const logToolDetails =
+      logToolDetailsRaw === "1" ? true : logToolDetailsRaw === "0" ? false : undefined;
+
     const resourceAttrsStr = env["OTEL_RESOURCE_ATTRIBUTES"] || "";
     const resourceAttrs = parseOtelResourceAttributes(resourceAttrsStr);
 
@@ -97,6 +115,7 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       organizationName,
       productName,
       teamId: env[ENV_VARS.TEAM_ID] || undefined,
+      logToolDetails,
       // Process env wins over the config file: the constant is documented as a shell-level
       // override and config/writer.ts emits it as an export (PRODUCT-2674 bug 2).
       managementEndpoint:
@@ -105,6 +124,20 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
   } catch {
     return null;
   }
+}
+
+/** True when the current shell exports the flag Claude Code needs to report skill names. */
+export function isToolDetailsLoaded(): boolean {
+  return process.env[ENV_VARS.LOG_TOOL_DETAILS] === "1";
+}
+
+/**
+ * True when the current shell explicitly exports `OTEL_LOG_TOOL_DETAILS=0`. This is a deliberate,
+ * active opt-out and must not be reported as "unset" even when the saved config file has the flag
+ * enabled, because the process-level value always wins once the config is sourced.
+ */
+export function isToolDetailsExplicitlyDisabled(): boolean {
+  return process.env[ENV_VARS.LOG_TOOL_DETAILS] === "0";
 }
 
 export function isEnvLoaded(): boolean {

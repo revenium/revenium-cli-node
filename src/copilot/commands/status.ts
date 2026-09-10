@@ -1,6 +1,10 @@
 import chalk from "chalk";
 import ora from "ora";
 import { loadConfig, configExists, getConfigPath } from "../config/loader.js";
+import {
+  GITHUB_CREDENTIAL_MISSING_MESSAGE,
+  resolveGithubCredential,
+} from "../config/github-credential.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { testConnectivity } from "../core/github-client.js";
 import { loadState } from "../core/sync/state-manager.js";
@@ -30,9 +34,13 @@ export async function statusCommand(): Promise<void> {
     process.exit(1);
   }
 
+  const githubCredential = resolveGithubCredential(config);
+
   console.log("\n" + chalk.bold("Configuration:"));
-  console.log(`  GitHub Token:     ${maskApiKey(config.githubToken)}`);
-  console.log(`  GitHub Org:       ${config.githubOrg}`);
+  if (githubCredential) {
+    console.log(`  GitHub Token:     ${maskApiKey(githubCredential.token)}`);
+    console.log(`  GitHub Org:       ${githubCredential.orgName}`);
+  }
   console.log(`  Revenium API Key: ${maskApiKey(config.reveniumApiKey)}`);
   console.log(`  Endpoint:         ${config.reveniumEndpoint}`);
   if (config.email) {
@@ -60,18 +68,23 @@ export async function statusCommand(): Promise<void> {
 
   console.log("\n" + chalk.bold("Connectivity:"));
 
-  const githubSpinner = ora("  Testing GitHub Copilot API...").start();
-  try {
-    const githubOk = await testConnectivity(config.githubToken, config.githubOrg);
-    if (githubOk) {
-      githubSpinner.succeed("  GitHub Copilot API connected");
-    } else {
-      githubSpinner.fail("  GitHub Copilot API unreachable");
+  if (githubCredential) {
+    const githubSpinner = ora("  Testing GitHub Copilot API...").start();
+    try {
+      const githubOk = await testConnectivity(githubCredential.token, githubCredential.orgName);
+      if (githubOk) {
+        githubSpinner.succeed("  GitHub Copilot API connected");
+      } else {
+        githubSpinner.fail("  GitHub Copilot API unreachable");
+      }
+    } catch (error) {
+      githubSpinner.fail(
+        `  GitHub Copilot API error: ${error instanceof Error ? error.message : "Unknown"}`,
+      );
     }
-  } catch (error) {
-    githubSpinner.fail(
-      `  GitHub Copilot API error: ${error instanceof Error ? error.message : "Unknown"}`,
-    );
+  } else {
+    console.log(chalk.dim("  GitHub Copilot API not checked — no local GitHub credential"));
+    console.log(chalk.dim(`  ${GITHUB_CREDENTIAL_MISSING_MESSAGE}`));
   }
 
   const reveniumSpinner = ora("  Testing Revenium API...").start();

@@ -8,11 +8,17 @@ import { getConfigDir } from "./loader.js";
 
 function generateEnvContent(config: CopilotConfig): string {
   const lines: string[] = [
-    `${ENV_KEYS.GITHUB_TOKEN}=${config.githubToken}`,
-    `${ENV_KEYS.GITHUB_ORG}=${config.githubOrg}`,
     `${ENV_KEYS.REVENIUM_API_KEY}=${config.reveniumApiKey}`,
     `${ENV_KEYS.REVENIUM_ENDPOINT}=${config.reveniumEndpoint}`,
   ];
+
+  if (config.githubToken) {
+    lines.push(`${ENV_KEYS.GITHUB_TOKEN}=${config.githubToken}`);
+  }
+
+  if (config.githubOrg) {
+    lines.push(`${ENV_KEYS.GITHUB_ORG}=${config.githubOrg}`);
+  }
 
   if (config.email) {
     lines.push(`${ENV_KEYS.SUBSCRIBER_EMAIL}=${config.email}`);
@@ -40,11 +46,17 @@ function generateEnvContent(config: CopilotConfig): string {
 
 function generateFishContent(config: CopilotConfig): string {
   const lines: string[] = [
-    `set -gx ${ENV_KEYS.GITHUB_TOKEN} ${escapeFishValue(config.githubToken)}`,
-    `set -gx ${ENV_KEYS.GITHUB_ORG} ${escapeFishValue(config.githubOrg)}`,
     `set -gx ${ENV_KEYS.REVENIUM_API_KEY} ${escapeFishValue(config.reveniumApiKey)}`,
     `set -gx ${ENV_KEYS.REVENIUM_ENDPOINT} ${escapeFishValue(config.reveniumEndpoint)}`,
   ];
+
+  if (config.githubToken) {
+    lines.push(`set -gx ${ENV_KEYS.GITHUB_TOKEN} ${escapeFishValue(config.githubToken)}`);
+  }
+
+  if (config.githubOrg) {
+    lines.push(`set -gx ${ENV_KEYS.GITHUB_ORG} ${escapeFishValue(config.githubOrg)}`);
+  }
 
   if (config.email) {
     lines.push(`set -gx ${ENV_KEYS.SUBSCRIBER_EMAIL} ${escapeFishValue(config.email)}`);

@@ -266,14 +266,24 @@ revenium-cursor test                # Send test metric
 revenium-copilot setup
 ```
 
-Requires a GitHub PAT (classic) with `manage_billing:copilot`, `read:org`, and `admin:org` scopes. The org must have the "Copilot usage metrics" policy enabled (GitHub Org > Settings > Copilot > Policies). Syncs per-user Copilot usage metrics and billing cost data.
+Configures the Revenium credentials the CLI needs. The GitHub credential itself is registered in the Revenium dashboard under Connections > Providers > GitHub Copilot — `setup` neither prompts for nor stores a GitHub PAT.
+
+The dashboard credential requires a GitHub PAT (classic) with `manage_billing:copilot`, `read:org`, and `admin:org` scopes, and the org must have the "Copilot usage metrics" policy enabled (GitHub Org > Settings > Copilot > Policies).
+
+CLI commands that read the GitHub API take the credential per invocation. Prefer the `GITHUB_TOKEN` / `GITHUB_ORG` environment variables: a token passed as `--github-token` is visible to other local users through the process list and is usually persisted in shell history and CI logs.
 
 ```bash
+export GITHUB_TOKEN=ghp_...
+export GITHUB_ORG=your-org
+
 revenium-copilot status              # Check config, sync state, connectivity
-revenium-copilot sync                # One-time sync of usage events
-revenium-copilot sync --watch        # Continuous sync (default: every 5 min)
 revenium-copilot test                # Send test metric
+revenium-copilot backfill --since 28d
 ```
+
+The equivalent `--github-token` / `--github-org` flags remain available for environments that cannot set variables.
+
+`revenium-copilot sync` and `sync --watch` are deprecated and will be removed in `2.0.0`. Ongoing metering comes from the dashboard provider credential.
 
 ### Quick Start - Codex CLI
 
@@ -305,10 +315,16 @@ Interactive setup wizard for Claude Code metering.
 | `--organization <name>` | Organization name                                                                  |
 | `--product <name>`      | Product name                                                                       |
 | `--skip-shell-update`   | Skip shell profile modification                                                    |
+| `--no-log-tool-details` | Write `OTEL_LOG_TOOL_DETAILS=0` instead of `1` (skill names stay redacted)         |
 
 #### `status`
 
-Displays current configuration (masked credentials), environment variable load status, and endpoint health with latency.
+Displays current configuration (masked credentials), environment variable load status, skill name
+attribution, and endpoint health with latency.
+
+| Option  | Description                                                                          |
+| ------- | ------------------------------------------------------------------------------------ |
+| `--fix` | Add `OTEL_LOG_TOOL_DETAILS=1` to an existing config that predates the flag (idempotent) |
 
 #### `test`
 
@@ -426,12 +442,10 @@ if you have headroom). `--fetch-delay 0` disables pacing entirely (not recommend
 
 #### `setup`
 
-Interactive setup wizard for GitHub Copilot metering. Requires a GitHub PAT (classic) with `manage_billing:copilot`, `read:org`, and `admin:org` scopes. The "Copilot usage metrics" policy must be enabled in your GitHub org settings (Settings > Copilot > Policies).
+Interactive setup wizard for the Revenium credentials the CLI needs. It does not prompt for or store a GitHub PAT — register that under Connections > Providers > GitHub Copilot in the Revenium dashboard.
 
 | Option                       | Description                                          |
 | ---------------------------- | ---------------------------------------------------- |
-| `--github-token <token>`     | GitHub personal access token                         |
-| `--github-org <org>`         | GitHub organization slug                             |
 | `--api-key <key>`            | Revenium API key                                     |
 | `--email <email>`            | Email for usage attribution                          |
 | `--organization <name>`      | Organization name                                    |
@@ -560,6 +574,20 @@ Imports historical Codex usage sessions from `~/.codex/sessions/`.
 | `REVENIUM_PRODUCT_NAME`      | No       | Product name for cost attribution                 |
 | `REVENIUM_COST_MULTIPLIER`   | No       | Cost multiplier override (default: 1.0)           |
 
+### Skill Name Attribution (`OTEL_LOG_TOOL_DETAILS`)
+
+Claude Code redacts the skill name on its `skill_activated` telemetry event unless
+`OTEL_LOG_TOOL_DETAILS=1` is set in the process environment. Without it, plugin skill usage arrives
+at Revenium as `custom_skill` with no name, so per-skill cost attribution is not possible.
+
+`setup` writes `export OTEL_LOG_TOOL_DETAILS=1` into `~/.claude/revenium.env` (and
+`~/.claude/revenium.fish`) by default. Configs written before this flag existed do not have it. Run
+`revenium-metering status --fix` to append it, then re-source the file.
+
+Privacy: the flag also causes Claude Code to export tool inputs alongside the tool name, for
+example the text of `Bash` commands and MCP tool names. It does **not** export prompts or model
+output. Pass `--no-log-tool-details` to `setup` to opt out; skill names then stay redacted.
+
 ### Cursor-Specific Variables
 
 | Variable                    | Required     | Description                                               |
@@ -572,8 +600,8 @@ Imports historical Codex usage sessions from `~/.codex/sessions/`.
 
 | Variable                    | Required      | Description                                               |
 | --------------------------- | ------------- | --------------------------------------------------------- |
-| `GITHUB_TOKEN`              | Yes (Copilot) | GitHub personal access token                              |
-| `GITHUB_ORG`                | Yes (Copilot) | GitHub organization slug                                  |
+| `GITHUB_TOKEN`              | Yes for `sync` / `backfill` | GitHub personal access token, read per invocation |
+| `GITHUB_ORG`                | Yes for `sync` / `backfill` | GitHub organization slug, read per invocation     |
 | `COPILOT_SUBSCRIPTION_TIER` | No            | Subscription tier: `individual`, `business`, `enterprise` |
 | `REVENIUM_SYNC_INTERVAL_MS` | No            | Sync interval in milliseconds (default: 300000)           |
 
@@ -685,15 +713,28 @@ import type {
 4. Check for lock file: `~/.cursor/revenium/revenium-cursor.lock`
 5. Use `revenium-cursor sync --watch` for continuous sync with automatic retry
 
-### Copilot sync not working
+### Copilot data not appearing
 
-1. Verify `GITHUB_TOKEN` has `manage_billing:copilot`, `read:org`, and `admin:org` scopes
+1. Verify the token in Connections > Providers > GitHub Copilot has `manage_billing:copilot`, `read:org`, and `admin:org` scopes
 2. Verify the "Copilot usage metrics" policy is enabled (GitHub Org > Settings > Copilot > Policies)
-3. Verify `GITHUB_ORG` matches your GitHub organization slug
-4. Run `revenium-copilot status` to check connectivity to both APIs
-5. Try `revenium-copilot reset` to clear sync state and start fresh
-6. Check for lock file: `~/.github-copilot/revenium/revenium-copilot.lock`
-7. GitHub usage data has a ~24 hour delay; data from today may not be available yet
+3. Verify the organization slug matches your GitHub organization
+4. GitHub usage data has a ~24 hour delay and Revenium refreshes Copilot once daily; data from today will not be available yet
+
+For CLI `sync` and `backfill` specifically:
+
+1. Export `GITHUB_TOKEN` / `GITHUB_ORG`, or pass `--github-token` / `--github-org`
+2. Run `revenium-copilot status` with the credential supplied to check connectivity to both APIs
+3. Try `revenium-copilot reset` to clear sync state and start fresh
+
+### Skills show as `custom_skill` with no name
+
+Claude Code only emits the skill name when `OTEL_LOG_TOOL_DETAILS=1` is exported in the shell that
+launches it. Sessions started from a config written before the flag existed report unnamed skills.
+
+1. Run `revenium-metering status`. It reports `Skill names: redacted` when the flag is missing
+2. Run `revenium-metering status --fix` to append the export to the existing config
+3. Re-source the config (`source ~/.claude/revenium.env`) or restart the terminal, then start a new
+   Claude Code session. Already-running sessions keep the old environment
 
 ### Test metric shows 0 processed events
 
