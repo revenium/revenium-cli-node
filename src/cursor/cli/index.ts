@@ -67,7 +67,7 @@ program
 
 program
   .command("sync")
-  .description("Sync Cursor usage events to Revenium")
+  .description("Sync Cursor usage events to Revenium (deprecated)")
   .option("-w, --watch", "Run continuously with configured interval")
   .option("--from <date>", "Start date for sync range (ISO 8601)")
   .option("--to <date>", "End date for sync range (ISO 8601)")

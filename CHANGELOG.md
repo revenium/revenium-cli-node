@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-21
+
+### Changed
+
+- `revenium-metering setup` now removes a ticket gate hook left behind by an earlier release,
+  from `~/.claude/settings.json` and `~/.cursor/hooks.json`, and deletes
+  `~/.revenium/hooks/ticket-gate.sh`. It matches that exact path, so a gate registered anywhere
+  else — the plugin's own, or one pushed by MDM — is left alone. The script is deleted only once
+  no settings file still names it; if one cannot be read or rewritten, setup keeps the script,
+  names that file, and asks you to fix it and re-run. Claude Code's machine-wide managed settings
+  are read for that decision too and never rewritten: a fleet whose managed settings still
+  register the old hook keeps the script, and setup names the file to hand to whoever manages it.
+- `revenium-cursor sync` reports itself as deprecated in `--help`, as `revenium-copilot sync`
+  already did. Both were deprecated in 1.2.0, but only the Copilot command said so before running.
+  Behaviour is unchanged: `sync` still works until `2.0.0`, and the runtime notice is the same.
+- The README states where this CLI fits before it describes the setup wizard. An
+  organization-wide Claude Code rollout is delivered through centrally-managed settings and needs
+  no per-developer install; the CLI covers historical backfill and individual onboarding. The
+  GitHub Copilot credential permissions now match what the published
+  documentation states, and the Node badge names the `engines` floor of 20.19 rather than a
+  looser `20+` that `npm install` would reject.
+
 ## [1.2.0] - 2026-09-10
 
 ### Added
@@ -307,6 +329,7 @@ Maintenance release. No functional changes to the CLI.
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[1.3.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.3.0
 [1.2.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.2.0
 [1.1.13]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.13
 [1.1.12]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.1.12

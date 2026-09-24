@@ -1,7 +1,7 @@
 # Revenium CLI for Node.js
 
 [![npm version](https://img.shields.io/npm/v/@revenium/cli.svg)](https://www.npmjs.com/package/@revenium/cli)
-[![Node.js](https://img.shields.io/badge/Node.js-18%2B-green)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20.19%2B-green)](https://nodejs.org/)
 [![Documentation](https://img.shields.io/badge/docs-revenium.io-blue)](https://docs.revenium.io)
 [![Website](https://img.shields.io/badge/website-revenium.ai-blue)](https://www.revenium.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -10,13 +10,26 @@
 
 A professional-grade set of CLI tools that configure automatic AI usage tracking for Claude Code, Gemini CLI, Cursor IDE, GitHub Copilot, and OpenAI Codex CLI. Features interactive setup wizards, OTLP telemetry, shell profile management with backup/restore, Cursor/Copilot sync engines with SHA-256 deduplication, and historical backfill with batch processing.
 
+## Where this CLI fits
+
+**An organization-wide Claude Code rollout does not need this CLI.** Claude Code reads centrally-managed configuration: an administrator defines the telemetry settings once in the Claude admin console, or delivers them through MDM, and every authenticated user picks them up on next startup with nothing installed on their machine. That is the recommended path for customer rollouts. See [Setup Claude Code](https://docs.revenium.io/track-and-control-costs/analyze-ai-tooling-spend/setup-claude-code) in the Revenium documentation.
+
+**Cursor and GitHub Copilot are dashboard integrations.** Both are organization-wide provider connections: add the credential once under Connections > Providers in the Revenium dashboard and Revenium syncs on its own.
+
+This CLI covers what those paths do not:
+
+- **Historical backfill** — importing past usage from local session files or a vendor API. Managed settings only ever meter from the moment they land, so backfill is CLI-only.
+- **Fast individual onboarding** — a single developer metering themselves without waiting on an administrator, and testing an endpoint before a fleet rollout.
+
+Claude Code telemetry carries `revenium.middleware.source`, so its deployment routes stay separable in Revenium reporting: a per-developer install from this CLI reports `revenium-cli`, and a centrally-managed deployment reports the channel the dashboard generated its settings block for.
+
 ## Features
 
 - **Five CLIs Unified** - Claude Code, Gemini CLI, Cursor IDE, GitHub Copilot, and Codex metering in one package
 - **Interactive Setup Wizard** - Guided configuration with shell profile auto-update and backup
 - **OTLP Telemetry** - Standard OpenTelemetry log format with retry logic and exponential backoff
-- **Cursor Sync Engine** - Continuous sync with SHA-256 deduplication, state persistence, and process locking
 - **Historical Backfill** - Import past usage data with batch processing, dry-run mode, and date filtering
+- **Cursor Sync Engine** - Continuous sync with SHA-256 deduplication, state persistence, and process locking (deprecated, removed in `2.0.0`)
 - **Shell Management** - Auto-detection (bash/zsh/fish), profile modification with timestamped backups
 - **Security** - PII masking, restricted file permissions (0o600), safe shell escaping
 - **Programmatic API** - Validation, OTLP client, health checks, masking, and shell detection
@@ -255,10 +268,11 @@ Requires both a Cursor Admin API key and a Revenium API key. Tests connectivity 
 
 ```bash
 revenium-cursor status              # Check config, sync state, connectivity
-revenium-cursor sync                # One-time sync of usage events
-revenium-cursor sync --watch        # Continuous sync (default: every 5 min)
 revenium-cursor test                # Send test metric
+revenium-cursor backfill --since 28d
 ```
+
+`revenium-cursor sync` and `sync --watch` are deprecated and will be removed in `2.0.0`. Ongoing metering comes from the dashboard provider credential. `backfill`, `status`, `test` and `reset` are unaffected.
 
 ### Quick Start - GitHub Copilot
 
@@ -268,7 +282,7 @@ revenium-copilot setup
 
 Configures the Revenium credentials the CLI needs. The GitHub credential itself is registered in the Revenium dashboard under Connections > Providers > GitHub Copilot — `setup` neither prompts for nor stores a GitHub PAT.
 
-The dashboard credential requires a GitHub PAT (classic) with `manage_billing:copilot`, `read:org`, and `admin:org` scopes, and the org must have the "Copilot usage metrics" policy enabled (GitHub Org > Settings > Copilot > Policies).
+The dashboard credential requires a GitHub personal access token owned by an organization owner: fine-grained (recommended) with the organization permissions **Organization Copilot metrics** (read-only) and **Administration** (read-only), or classic with the `admin:org` and `manage_billing:copilot` scopes. The org must also have the "Copilot usage metrics" policy enabled (GitHub Org > Settings > Copilot > Policies).
 
 CLI commands that read the GitHub API take the credential per invocation. Prefer the `GITHUB_TOKEN` / `GITHUB_ORG` environment variables: a token passed as `--github-token` is visible to other local users through the process list and is usually persisted in shell history and CI logs.
 
@@ -403,9 +417,9 @@ Sends a test OTLP metric.
 | ----------- | ---------------------------------- |
 | `--verbose` | Show full request/response details |
 
-#### `sync`
+#### `sync` (deprecated)
 
-Syncs Cursor usage events to Revenium.
+Syncs Cursor usage events to Revenium. Deprecated and removed in `2.0.0`; register the Cursor credential under Connections > Providers in the Revenium dashboard instead.
 
 | Option          | Description                         |
 | --------------- | ----------------------------------- |
@@ -711,11 +725,11 @@ import type {
 2. Run `revenium-cursor status` to check connectivity to both APIs
 3. Try `revenium-cursor reset` to clear sync state and start fresh
 4. Check for lock file: `~/.cursor/revenium/revenium-cursor.lock`
-5. Use `revenium-cursor sync --watch` for continuous sync with automatic retry
+5. For ongoing metering, register the Cursor credential under Connections > Providers in the Revenium dashboard rather than running `sync --watch`, which is deprecated
 
 ### Copilot data not appearing
 
-1. Verify the token in Connections > Providers > GitHub Copilot has `manage_billing:copilot`, `read:org`, and `admin:org` scopes
+1. Verify the token in Connections > Providers > GitHub Copilot carries the permissions above: fine-grained with **Organization Copilot metrics** and **Administration** (both read-only), or classic with `admin:org` and `manage_billing:copilot`
 2. Verify the "Copilot usage metrics" policy is enabled (GitHub Org > Settings > Copilot > Policies)
 3. Verify the organization slug matches your GitHub organization
 4. GitHub usage data has a ~24 hour delay and Revenium refreshes Copilot once daily; data from today will not be available yet
@@ -780,7 +794,7 @@ npm run format:check     # Prettier check
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 20.19+ (the `engines` floor; `npm install` refuses anything below it)
 
 ## Contributing
 
