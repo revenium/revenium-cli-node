@@ -266,4 +266,3 @@ describe("claude-code setupCommand — scripted run without a terminal", () => {
     expect(checkEndpointHealth).not.toHaveBeenCalled();
   });
 });
-

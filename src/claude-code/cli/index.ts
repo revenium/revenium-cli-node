@@ -37,7 +37,6 @@ export function toSetupOptions(options: CliSetupOptions): SetupOptions {
   };
 }
 
-
 program
   .name("revenium-metering")
   .description("Configure Claude Code telemetry export to Revenium")

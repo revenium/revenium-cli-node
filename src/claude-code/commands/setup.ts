@@ -30,7 +30,6 @@ export interface SetupOptions {
 
   logToolDetails?: boolean;
 
-
   blockPolicy?: string;
 
   teamId?: string;
@@ -115,7 +114,6 @@ async function collectConfiguration(options: SetupOptions): Promise<ClaudeCodeCo
   if (!interactive) {
     requireOptions([{ flag: "--api-key", value: options.apiKey }]);
   }
-
 
   enforceSetupFlags({
     apiKey: options.apiKey,
