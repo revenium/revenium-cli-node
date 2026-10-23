@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command, Option } from "commander";
+import { Command } from "commander";
 import { setupCommand, type SetupOptions } from "../commands/setup.js";
 import { statusCommand } from "../commands/status.js";
 import { testCommand } from "../commands/test.js";

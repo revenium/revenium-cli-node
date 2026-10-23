@@ -59,7 +59,7 @@ npm run test:integration          # All integration tests (cli-binaries, otlp-cl
 ### E2E Tests (Live API)
 
 ```bash
-export REVENIUM_E2E_API_KEY=hak_your_key_here
+export REVENIUM_E2E_API_KEY=rev_mk_your_key_here
 
 npm run build
 npm run test:e2e                  # All providers
@@ -110,7 +110,7 @@ The test process runs in an isolated environment with:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `REVENIUM_E2E_API_KEY` | Yes | - | Revenium API key (`hak_` prefix) |
+| `REVENIUM_E2E_API_KEY` | Yes | - | Revenium metering key (`rev_mk_`; `hak_` and `rev_sk_` still accepted) |
 | `REVENIUM_E2E_ENDPOINT` | No | `https://api.revenium.ai` | Base API endpoint |
 | `REVENIUM_E2E_PROVIDER` | No | `all` | Provider filter: `all`, `claude-code`, `gemini-cli`, `cursor` |
 
@@ -131,10 +131,10 @@ Each provider writes different environment files to simulate a real user setup:
 - `GEMINI_TELEMETRY_OTLP_ENDPOINT` (base OTLP endpoint)
 - `GEMINI_TELEMETRY_OTLP_PROTOCOL=http`
 - `GEMINI_TELEMETRY_LOG_PROMPTS=true`
-- `OTEL_RESOURCE_ATTRIBUTES` (api_key + cost_multiplier)
+- `OTEL_RESOURCE_ATTRIBUTES` (legacy fixtures only: the API key as a resource attribute)
 
 **Cursor** (`~/.cursor/revenium/revenium.env`):
-- `CURSOR_API_KEY` (placeholder)
+- `REVENIUM_CURSOR_API_KEY` (placeholder)
 - `REVENIUM_API_KEY`
 - `REVENIUM_ENDPOINT`
 
