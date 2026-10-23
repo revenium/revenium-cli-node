@@ -42,7 +42,9 @@ async function main() {
 
   if (health.healthy) {
     console.log("\nSetup verified! Cursor IDE metering is ready.");
-    console.log("Run 'revenium-cursor sync --watch' to start continuous sync.");
+    console.log(
+      "Register your Cursor credential under Connections > Providers > Cursor in the Revenium dashboard to start metering.",
+    );
   } else {
     console.error("\nSetup verification failed. Check your configuration.");
     process.exit(1);

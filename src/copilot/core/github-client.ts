@@ -1,61 +1,65 @@
-import { GITHUB_API_BASE_URL, GITHUB_API_VERSION, DEFAULT_LOOKBACK_DAYS } from "../constants.js";
+import {
+  BILLING_PERMISSION_HINT,
+  GITHUB_API_BASE_URL,
+  GITHUB_API_VERSION,
+  DEFAULT_LOOKBACK_DAYS,
+  ORGANIZATION_UNREACHABLE_HINT,
+  SURFACE_MODEL,
+  UNKNOWN_EDITOR,
+  UNKNOWN_LANGUAGE,
+} from "../constants.js";
+import {
+  applyBillingToBreakdowns,
+  createBillingOnlyBreakdowns,
+  isCostBearing,
+} from "./billing-match.js";
 import type {
   CopilotUsageDay,
   CopilotUsageBreakdown,
+  CopilotUsageFetch,
   CopilotMetricsReportResponse,
+  CopilotSurface,
+  CopilotSurfaceTotals,
   CopilotUserDayReport,
+  CopilotUserLanguageModel,
+  BillingUsageItem,
   BillingUsageResponse,
 } from "../types.js";
+import {
+  getMaxRetries,
+  getRequestTimeoutMs,
+  isRetryableStatusCode,
+  jitteredBackoff,
+  retryDelayMs,
+  sanitizeErrorMessage,
+  sleep,
+} from "../../_core/api/resilience.js";
+import {
+  describeTransportFailure,
+  isRetryableTransportError,
+} from "../../_core/api/network-error.js";
 
-const REQUEST_TIMEOUT_MS = 30_000;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1_000;
-
-function isRetryableStatusCode(status: number): boolean {
-  return (
-    status === 408 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
-}
-
-function isRetryableError(error: Error): boolean {
-  return (
-    error.message.includes("ECONNRESET") ||
-    error.message.includes("ETIMEDOUT") ||
-    error.message.includes("ENOTFOUND") ||
-    error.message.includes("network") ||
-    error.message.includes("timeout")
-  );
-}
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function sanitizeErrorMessage(message: string, token: string): string {
-  const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return message.replace(new RegExp(escapedToken, "g"), "***");
-}
-
-function parseRetryAfter(header: string | null, attempt: number): number {
-  const fallback = RETRY_DELAY_MS * (attempt + 1);
-  if (!header) return fallback;
-
-  const seconds = parseInt(header, 10);
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return seconds * 1000;
+class GithubHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly rateLimited = false,
+  ) {
+    super(message);
+    this.name = "GithubHttpError";
   }
+}
 
-  const date = new Date(header);
-  if (!isNaN(date.getTime())) {
-    return Math.max(date.getTime() - Date.now(), 0);
-  }
+function isGithubStatus(error: unknown, status: number): boolean {
+  return error instanceof GithubHttpError && error.status === status;
+}
 
-  return fallback;
+function isRateLimited(response: Response): boolean {
+  if (response.status !== 403) return false;
+  return (
+    response.headers.get("retry-after") !== null ||
+    response.headers.get("x-ratelimit-remaining") === "0"
+  );
 }
 
 function formatDateParam(date: Date): string {
@@ -63,11 +67,13 @@ function formatDateParam(date: Date): string {
 }
 
 async function githubRequest<T>(url: string, token: string): Promise<T> {
+  const maxRetries = getMaxRetries();
+  const timeoutMs = getRequestTimeoutMs();
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -86,20 +92,20 @@ async function githubRequest<T>(url: string, token: string): Promise<T> {
         const errorText = await response.text();
         const sanitized = sanitizeErrorMessage(errorText, token);
 
-        if (isRetryableStatusCode(response.status) && attempt < MAX_RETRIES - 1) {
-          lastError = new Error(
-            `GitHub API ${response.status} ${response.statusText} - ${sanitized}`,
-          );
+        const rateLimited = isRateLimited(response);
+        const httpError = new GithubHttpError(
+          response.status,
+          `GitHub API ${response.status} ${response.statusText} - ${sanitized}`,
+          rateLimited,
+        );
 
-          if (response.status === 429) {
-            await sleep(parseRetryAfter(response.headers.get("retry-after"), attempt));
-          } else {
-            await sleep(RETRY_DELAY_MS * (attempt + 1));
-          }
+        if ((isRetryableStatusCode(response.status) || rateLimited) && attempt < maxRetries - 1) {
+          lastError = httpError;
+          await sleep(retryDelayMs(response, attempt));
           continue;
         }
 
-        throw new Error(`GitHub API ${response.status} ${response.statusText} - ${sanitized}`);
+        throw httpError;
       }
 
       const text = await response.text();
@@ -110,15 +116,15 @@ async function githubRequest<T>(url: string, token: string): Promise<T> {
     } catch (error) {
       clearTimeout(timeoutId);
 
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          lastError = new Error(`GitHub API request timeout after ${REQUEST_TIMEOUT_MS}ms`);
-        } else {
-          lastError = new Error(sanitizeErrorMessage(error.message, token));
-        }
+      if (error instanceof GithubHttpError) {
+        throw error;
+      }
 
-        if (isRetryableError(lastError) && attempt < MAX_RETRIES - 1) {
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+      if (error instanceof Error) {
+        lastError = new Error(describeTransportFailure(error, token, timeoutMs, "GitHub API"));
+
+        if (isRetryableTransportError(error) && attempt < maxRetries - 1) {
+          await sleep(jitteredBackoff(attempt));
           continue;
         }
 
@@ -132,21 +138,26 @@ async function githubRequest<T>(url: string, token: string): Promise<T> {
 }
 
 async function downloadNdjson(url: string): Promise<string> {
+  const maxRetries = getMaxRetries();
+  const timeoutMs = getRequestTimeoutMs();
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        const err = new Error(`NDJSON download failed: ${response.status} ${response.statusText}`);
-        if (isRetryableStatusCode(response.status) && attempt < MAX_RETRIES - 1) {
+        const err = new GithubHttpError(
+          response.status,
+          `NDJSON download failed: ${response.status} ${response.statusText}`,
+        );
+        if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
           lastError = err;
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          await sleep(retryDelayMs(response, attempt));
           continue;
         }
         throw err;
@@ -155,14 +166,16 @@ async function downloadNdjson(url: string): Promise<string> {
       return await response.text();
     } catch (error) {
       clearTimeout(timeoutId);
+
+      if (error instanceof GithubHttpError) {
+        throw error;
+      }
+
       if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          lastError = new Error(`NDJSON download timeout after ${REQUEST_TIMEOUT_MS}ms`);
-        } else {
-          lastError = error;
-        }
-        if (isRetryableError(lastError) && attempt < MAX_RETRIES - 1) {
-          await sleep(RETRY_DELAY_MS * (attempt + 1));
+        lastError = new Error(describeTransportFailure(error, url, timeoutMs, "NDJSON download"));
+
+        if (isRetryableTransportError(error) && attempt < maxRetries - 1) {
+          await sleep(jitteredBackoff(attempt));
           continue;
         }
         throw lastError;
@@ -187,6 +200,155 @@ function parseNdjson<T>(text: string): T[] {
   return results;
 }
 
+type SurfaceCounts = Pick<
+  CopilotUsageBreakdown,
+  | "suggestions_count"
+  | "acceptances_count"
+  | "lines_suggested"
+  | "lines_accepted"
+  | "input_tokens"
+  | "output_tokens"
+  | "ai_credits"
+>;
+
+const NO_ACTIVITY: SurfaceCounts = {
+  suggestions_count: 0,
+  acceptances_count: 0,
+  lines_suggested: 0,
+  lines_accepted: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  ai_credits: 0,
+};
+
+function createSurfaceBreakdown(
+  user: CopilotUserDayReport,
+  surface: Exclude<CopilotSurface, "billing">,
+  counts: SurfaceCounts,
+): CopilotUsageBreakdown {
+  return {
+    ...counts,
+    language: UNKNOWN_LANGUAGE,
+    editor: UNKNOWN_EDITOR,
+    model: SURFACE_MODEL[surface],
+    user_login: user.user_login,
+    cost_usd: 0,
+    active_users: 1,
+    surface,
+  };
+}
+
+function hasReportedActivity(
+  totals: CopilotSurfaceTotals | undefined,
+): totals is CopilotSurfaceTotals {
+  if (!totals) return false;
+
+  return (
+    totals.session_count > 0 ||
+    totals.request_count > 0 ||
+    totals.prompt_count > 0 ||
+    (totals.token_usage?.prompt_tokens_sum ?? 0) > 0 ||
+    (totals.token_usage?.output_tokens_sum ?? 0) > 0
+  );
+}
+
+function createSurfaceTotalsBreakdown(
+  user: CopilotUserDayReport,
+  surface: Exclude<CopilotSurface, "billing">,
+  totals: CopilotSurfaceTotals | undefined,
+): CopilotUsageBreakdown | null {
+  if (!hasReportedActivity(totals)) return null;
+
+  return createSurfaceBreakdown(user, surface, {
+    ...NO_ACTIVITY,
+    input_tokens: totals.token_usage?.prompt_tokens_sum ?? 0,
+    output_tokens: totals.token_usage?.output_tokens_sum ?? 0,
+  });
+}
+
+function createCompletionBreakdown(user: CopilotUserDayReport): CopilotUsageBreakdown | null {
+  const models = user.totals_by_language_model ?? [];
+  const residual = (
+    total: number | undefined,
+    pick: (entry: CopilotUserLanguageModel) => number | undefined,
+  ): number =>
+    Math.max(0, (total ?? 0) - models.reduce((sum, entry) => sum + (pick(entry) ?? 0), 0));
+
+  const suggestions = residual(
+    user.code_generation_activity_count,
+    (entry) => entry.code_generation_activity_count,
+  );
+  if (suggestions === 0) return null;
+
+  const linesSuggested = residual(
+    user.loc_suggested_to_add_sum,
+    (entry) => entry.loc_suggested_to_add_sum,
+  );
+
+  return createSurfaceBreakdown(user, "completion", {
+    ...NO_ACTIVITY,
+    suggestions_count: suggestions,
+    acceptances_count: Math.min(
+      suggestions,
+      residual(
+        user.code_acceptance_activity_count,
+        (entry) => entry.code_acceptance_activity_count,
+      ),
+    ),
+    lines_suggested: linesSuggested,
+    lines_accepted: Math.min(
+      linesSuggested,
+      residual(user.loc_added_sum, (entry) => entry.loc_added_sum),
+    ),
+  });
+}
+
+function shareCreditsAcrossRows(
+  breakdowns: CopilotUsageBreakdown[],
+  credits: number,
+): CopilotUsageBreakdown[] {
+  if (credits <= 0 || breakdowns.length === 0) return breakdowns;
+
+  const share = credits / breakdowns.length;
+  return breakdowns.map((breakdown) => ({ ...breakdown, ai_credits: share }));
+}
+
+function createUserBreakdowns(user: CopilotUserDayReport): CopilotUsageBreakdown[] {
+  const primaryIde = user.totals_by_ide?.[0]?.ide ?? UNKNOWN_EDITOR;
+
+  const breakdowns: CopilotUsageBreakdown[] = (user.totals_by_language_model ?? []).map(
+    (entry) => ({
+      language: entry.language,
+      editor: primaryIde,
+      model: entry.model,
+      user_login: user.user_login,
+      cost_usd: 0,
+      suggestions_count: entry.code_generation_activity_count ?? 0,
+      acceptances_count: entry.code_acceptance_activity_count ?? 0,
+      lines_suggested: entry.loc_suggested_to_add_sum ?? 0,
+      lines_accepted: entry.loc_added_sum ?? 0,
+      active_users: 1,
+      input_tokens: 0,
+      output_tokens: 0,
+      ai_credits: 0,
+    }),
+  );
+
+  const surfaceRows = [
+    createSurfaceTotalsBreakdown(user, "cli", user.totals_by_cli),
+    createSurfaceTotalsBreakdown(user, "app", user.totals_by_copilot_app),
+    createCompletionBreakdown(user),
+  ].filter((row): row is CopilotUsageBreakdown => row !== null);
+
+  const credits = user.ai_credits_used ?? 0;
+  const rows = [...breakdowns, ...surfaceRows];
+  if (rows.length === 0 && credits > 0) {
+    rows.push(createSurfaceBreakdown(user, "credit", NO_ACTIVITY));
+  }
+
+  return shareCreditsAcrossRows(rows, credits);
+}
+
 export function convertUserReportToUsageDay(
   day: string,
   users: CopilotUserDayReport[],
@@ -200,32 +362,17 @@ export function convertUserReportToUsageDay(
   let chatUsers = 0;
 
   for (const user of users) {
-    const primaryIde = user.totals_by_ide?.[0]?.ide ?? "unknown";
-
     if (user.used_chat || user.used_agent) {
       chatUsers++;
-      totalChatTurns += user.user_initiated_interaction_count;
+      totalChatTurns += user.user_initiated_interaction_count ?? 0;
     }
 
-    for (const entry of user.totals_by_language_model ?? []) {
-      totalSuggestions += entry.code_generation_activity_count;
-      totalAcceptances += entry.code_acceptance_activity_count;
-      totalLinesSuggested += entry.loc_suggested_to_add_sum;
-      totalLinesAccepted += entry.loc_added_sum;
+    totalSuggestions += user.code_generation_activity_count ?? 0;
+    totalAcceptances += user.code_acceptance_activity_count ?? 0;
+    totalLinesSuggested += user.loc_suggested_to_add_sum ?? 0;
+    totalLinesAccepted += user.loc_added_sum ?? 0;
 
-      breakdowns.push({
-        language: entry.language,
-        editor: primaryIde,
-        model: entry.model,
-        user_login: user.user_login,
-        cost_usd: 0,
-        suggestions_count: entry.code_generation_activity_count,
-        acceptances_count: entry.code_acceptance_activity_count,
-        lines_suggested: entry.loc_suggested_to_add_sum,
-        lines_accepted: entry.loc_added_sum,
-        active_users: 1,
-      });
-    }
+    breakdowns.push(...createUserBreakdowns(user));
   }
 
   return {
@@ -242,11 +389,21 @@ export function convertUserReportToUsageDay(
   };
 }
 
-async function fetchBillingForDay(
-  token: string,
-  org: string,
-  date: Date,
-): Promise<Map<string, number>> {
+interface BillingFetch {
+  items: BillingUsageItem[];
+  failure?: string;
+}
+
+function describeBillingFailure(error: unknown): string {
+  if (error instanceof GithubHttpError) {
+    const needsPermissionHint =
+      !error.rateLimited && (error.status === 401 || error.status === 403);
+    return needsPermissionHint ? `${error.message} ${BILLING_PERMISSION_HINT}` : error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function fetchBillingForDay(token: string, org: string, date: Date): Promise<BillingFetch> {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1;
   const day = date.getUTCDate();
@@ -255,37 +412,109 @@ async function fetchBillingForDay(
 
   try {
     const response = await githubRequest<BillingUsageResponse | null>(url, token);
-    const costByModel = new Map<string, number>();
-
-    if (response?.usageItems) {
-      for (const item of response.usageItems) {
-        const normalizedModel = item.model.replace(/^Auto:\s*/i, "").toLowerCase();
-        const existing = costByModel.get(normalizedModel) ?? 0;
-        costByModel.set(normalizedModel, existing + item.grossAmount);
-      }
+    if (!Array.isArray(response?.usageItems)) {
+      return { items: [], failure: "GitHub returned no usageItems array" };
     }
-
-    return costByModel;
-  } catch {
-    return new Map();
+    return { items: response.usageItems };
+  } catch (error) {
+    if (isGithubStatus(error, 404)) return { items: [] };
+    return { items: [], failure: describeBillingFailure(error) };
   }
 }
 
-function enrichBreakdownsWithCost(
-  breakdowns: CopilotUsageBreakdown[],
-  costByModel: Map<string, number>,
-): void {
-  const countPerModel = new Map<string, number>();
-  for (const b of breakdowns) {
-    const key = b.model.toLowerCase();
-    countPerModel.set(key, (countPerModel.get(key) ?? 0) + 1);
+function metricsReportUrl(org: string, day: string): string {
+  return `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/metrics/reports/users-1-day?day=${day}`;
+}
+
+async function fetchUserReportsForDay(
+  token: string,
+  org: string,
+  day: string,
+): Promise<CopilotUserDayReport[]> {
+  try {
+    const report = await githubRequest<CopilotMetricsReportResponse | null>(
+      metricsReportUrl(org, day),
+      token,
+    );
+    const users: CopilotUserDayReport[] = [];
+
+    for (const link of report?.download_links ?? []) {
+      const ndjsonText = await downloadNdjson(link);
+      users.push(...parseNdjson<CopilotUserDayReport>(ndjsonText));
+    }
+
+    return users;
+  } catch (error) {
+    if (isGithubStatus(error, 404)) return [];
+    throw error;
+  }
+}
+
+function withholdCostBearingRows(usageDay: CopilotUsageDay): void {
+  usageDay.breakdown = usageDay.breakdown.filter((breakdown) => !isCostBearing(breakdown));
+}
+
+function buildUsageFetch(
+  usageDay: CopilotUsageDay,
+  userCount: number,
+  billing: BillingFetch,
+  allowMissingBilling: boolean,
+): CopilotUsageFetch {
+  if (billing.failure) {
+    const costBearingRecords = usageDay.breakdown.filter(isCostBearing).length;
+    if (!allowMissingBilling) withholdCostBearingRows(usageDay);
+
+    return {
+      days: usageDay.breakdown.length > 0 ? [usageDay] : [],
+      unmatchedBilling: [],
+      billingUnavailable: [
+        {
+          day: usageDay.day,
+          reason: billing.failure,
+          withheldRecords: allowMissingBilling ? 0 : costBearingRecords,
+          zeroCostRecords: allowMissingBilling ? costBearingRecords : 0,
+          unresolved: !allowMissingBilling,
+        },
+      ],
+    };
   }
 
-  for (const b of breakdowns) {
-    const key = b.model.toLowerCase();
-    const totalCost = costByModel.get(key) ?? 0;
-    const count = countPerModel.get(key) ?? 1;
-    b.cost_usd = totalCost / count;
+  const unmatchedBilling = applyBillingToBreakdowns(
+    usageDay.breakdown,
+    billing.items,
+    usageDay.day,
+  );
+  usageDay.breakdown.push(...createBillingOnlyBreakdowns(unmatchedBilling));
+
+  return {
+    days: userCount > 0 || unmatchedBilling.length > 0 ? [usageDay] : [],
+    unmatchedBilling,
+    billingUnavailable: [],
+  };
+}
+
+export interface UsageFetchOptions {
+  allowMissingBilling?: boolean;
+}
+
+export class OrganizationUnreachableError extends Error {
+  constructor(readonly org: string) {
+    super(
+      `GitHub organization "${org}" could not be reached with this token. ${ORGANIZATION_UNREACHABLE_HINT}`,
+    );
+    this.name = "OrganizationUnreachableError";
+  }
+}
+
+async function assertOrganizationReachable(token: string, org: string): Promise<void> {
+  const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}`;
+
+  try {
+    await githubRequest<unknown>(url, token);
+  } catch (error) {
+    if (!isGithubStatus(error, 404)) throw error;
+
+    throw new OrganizationUnreachableError(org);
   }
 }
 
@@ -294,7 +523,9 @@ export async function* fetchUsageDays(
   org: string,
   since?: string,
   until?: string,
-): AsyncGenerator<CopilotUsageDay[]> {
+  options: UsageFetchOptions = {},
+): AsyncGenerator<CopilotUsageFetch> {
+  const { allowMissingBilling = false } = options;
   const now = new Date();
   const defaultSince = new Date(now);
   defaultSince.setDate(defaultSince.getDate() - DEFAULT_LOOKBACK_DAYS);
@@ -304,52 +535,62 @@ export async function* fetchUsageDays(
 
   const current = new Date(sinceDate);
 
+  await assertOrganizationReachable(token, org);
+
   while (current <= untilDate) {
     const dayParam = formatDateParam(current);
 
-    const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/metrics/reports/users-1-day?day=${dayParam}`;
+    const users = await fetchUserReportsForDay(token, org, dayParam);
+    const billing = await fetchBillingForDay(token, org, current);
+    const usageDay = convertUserReportToUsageDay(dayParam, users);
 
-    try {
-      const report = await githubRequest<CopilotMetricsReportResponse | null>(url, token);
-
-      if (report?.download_links && report.download_links.length > 0) {
-        const allUsers: CopilotUserDayReport[] = [];
-
-        for (const link of report.download_links) {
-          const ndjsonText = await downloadNdjson(link);
-          const users = parseNdjson<CopilotUserDayReport>(ndjsonText);
-          allUsers.push(...users);
-        }
-
-        if (allUsers.length > 0) {
-          const usageDay = convertUserReportToUsageDay(dayParam, allUsers);
-          const costByModel = await fetchBillingForDay(token, org, current);
-          enrichBreakdownsWithCost(usageDay.breakdown, costByModel);
-          yield [usageDay];
-        }
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("404")) {
-        current.setDate(current.getDate() + 1);
-        continue;
-      }
-      throw error;
-    }
+    yield buildUsageFetch(usageDay, users.length, billing, allowMissingBilling);
 
     current.setDate(current.getDate() + 1);
   }
 }
 
-export async function testConnectivity(token: string, org: string): Promise<boolean> {
+export type CopilotAccess =
+  | { status: "connected" }
+  | { status: "metrics-unreadable" }
+  | { status: "organization-unreachable" }
+  | { status: "failed"; message: string };
+
+function describeAccessFailure(error: unknown, token: string): CopilotAccess {
+  const message = error instanceof Error ? error.message : String(error);
+  return { status: "failed", message: sanitizeErrorMessage(message, token) };
+}
+
+function isCredentialRejected(error: unknown): boolean {
+  return isGithubStatus(error, 401) || isGithubStatus(error, 403);
+}
+
+async function checkMetricsAccess(token: string, org: string): Promise<CopilotAccess> {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
 
-  const url = `${GITHUB_API_BASE_URL}/orgs/${encodeURIComponent(org)}/copilot/metrics/reports/users-1-day?day=${formatDateParam(yesterday)}`;
-
   try {
-    await githubRequest<CopilotMetricsReportResponse>(url, token);
-    return true;
-  } catch {
-    return false;
+    await githubRequest<CopilotMetricsReportResponse | null>(
+      metricsReportUrl(org, formatDateParam(yesterday)),
+      token,
+    );
+    return { status: "connected" };
+  } catch (error) {
+    if (isGithubStatus(error, 404)) return { status: "connected" };
+    if (isCredentialRejected(error)) return { status: "metrics-unreadable" };
+    return describeAccessFailure(error, token);
   }
+}
+
+export async function checkCopilotAccess(token: string, org: string): Promise<CopilotAccess> {
+  try {
+    await assertOrganizationReachable(token, org);
+  } catch (error) {
+    if (error instanceof OrganizationUnreachableError)
+      return { status: "organization-unreachable" };
+    if (isCredentialRejected(error)) return { status: "metrics-unreadable" };
+    return describeAccessFailure(error, token);
+  }
+
+  return checkMetricsAccess(token, org);
 }

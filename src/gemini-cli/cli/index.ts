@@ -4,6 +4,8 @@ import { Command } from "commander";
 import { setupCommand } from "../commands/setup.js";
 import { statusCommand } from "../commands/status.js";
 import { testCommand } from "../commands/test.js";
+import { runCommand } from "../commands/run.js";
+import { installEnvProxyDispatcher } from "../../_core/net/proxy.js";
 import pkg from "../../../package.json";
 
 export const program = new Command();
@@ -16,7 +18,7 @@ program
 program
   .command("setup")
   .description("Interactive setup wizard to configure Gemini CLI metering")
-  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
+  .option("-k, --api-key <key>", "Revenium metering key rev_mk_... (recommended)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")
@@ -48,6 +50,15 @@ program
     await testCommand({ verbose: options.verbose });
   });
 
+program
+  .command("run")
+  .description("Launch Gemini CLI with Revenium telemetry injected into its process environment")
+  .allowUnknownOption()
+  .argument("[args...]", "Arguments forwarded to the gemini binary")
+  .action(async (args: string[]) => {
+    await runCommand(args);
+  });
+
 if (process.env.NODE_ENV !== "test") {
-  program.parse();
+  void installEnvProxyDispatcher().then(() => program.parse());
 }

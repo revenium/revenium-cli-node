@@ -4,7 +4,9 @@ import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { printSyncDeprecationNotice } from "../../_core/ui/deprecation.js";
-import { loadConfig, configExists } from "../config/loader.js";
+import { configExists } from "../config/loader.js";
+import { loadMigratedConfig } from "./migrated-config.js";
+import { toInclusiveRangeEnd } from "../../_core/utils/date-range.js";
 import { runSyncCycle, SyncWatcher } from "../core/sync/scheduler.js";
 import { LOCK_FILE } from "../constants.js";
 import type { CursorConfig, SyncResult } from "../types.js";
@@ -64,7 +66,7 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const config = await loadConfig();
+  const config = await loadMigratedConfig();
   if (!config) {
     console.log(chalk.red("Could not load configuration"));
     process.exit(1);
@@ -101,30 +103,44 @@ async function runOnceMode(
 ): Promise<void> {
   console.log(chalk.bold("\nRevenium Cursor IDE Sync\n"));
 
-  const fromMs = options.from ? new Date(options.from).getTime() : undefined;
-  const toMs = options.to ? new Date(options.to).getTime() : undefined;
-
-  if (options.from && (!fromMs || isNaN(fromMs))) {
-    console.log(chalk.red("Invalid --from date format"));
-    await cleanup();
-    process.exit(1);
+  let fromMs: number | undefined;
+  if (options.from !== undefined) {
+    fromMs = new Date(options.from).getTime();
+    if (Number.isNaN(fromMs)) {
+      console.log(chalk.red("Invalid --from date format"));
+      await cleanup();
+      process.exit(1);
+    }
   }
 
-  if (options.to && (!toMs || isNaN(toMs))) {
-    console.log(chalk.red("Invalid --to date format"));
-    await cleanup();
-    process.exit(1);
+  let toMs: number | undefined;
+  if (options.to !== undefined) {
+    const parsedTo = new Date(options.to);
+    if (Number.isNaN(parsedTo.getTime())) {
+      console.log(chalk.red("Invalid --to date format"));
+      await cleanup();
+      process.exit(1);
+    }
+    toMs = toInclusiveRangeEnd(options.to, parsedTo).getTime();
   }
 
   const spinner = ora("Syncing usage events...").start();
 
   try {
     const result = await runSyncCycle(config, fromMs, toMs);
-    spinner.succeed(`Sync complete: ${formatResult(result)}`);
 
     if (result.errors > 0) {
-      console.log(chalk.yellow(`\nSome events failed to send (${result.errors} errors)`));
+      spinner.warn(`Sync incomplete: ${formatResult(result)}`);
+      console.log(
+        chalk.yellow(
+          `\nRevenium did not accept ${result.errors} event(s). They stay in the sync window and are retried on the next sync.`,
+        ),
+      );
+      await cleanup();
+      process.exit(1);
     }
+
+    spinner.succeed(`Sync complete: ${formatResult(result)}`);
   } catch (error) {
     spinner.fail("Sync failed");
     console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));

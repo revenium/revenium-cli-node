@@ -1,23 +1,17 @@
-export function escapeShellValue(value: string): string {
-  value = value.replace(/[\r\n]/g, "");
-  const escaped = value.replace(/'/g, "'\\''");
-  return `'${escaped}'`;
+export function stripNewlines(value: string): string {
+  return value.replace(/[\r\n]/g, "");
 }
 
-export function escapeDoubleQuotedShellValue(value: string): string {
-  value = value.replace(/[\r\n]/g, "");
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`")}"`;
+export function escapeShellValue(value: string): string {
+  return `'${stripNewlines(value).replace(/'/g, "'\\''")}'`;
 }
 
 export function escapeFishValue(value: string): string {
-  value = value.replace(/[\r\n]/g, "");
-  const escaped = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-  return `'${escaped}'`;
+  return `'${stripNewlines(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
 export function escapeResourceAttributeValue(value: string): string {
-  value = value.replace(/[\r\n]/g, "");
-  return value
+  return stripNewlines(value)
     .replace(/%/g, "%25")
     .replace(/\\/g, "%5C")
     .replace(/\$/g, "%24")

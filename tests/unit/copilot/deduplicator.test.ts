@@ -1,11 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { computeBreakdownHash, Deduplicator } from "../../../src/copilot/core/sync/deduplicator.js";
+import { computeBreakdownHash } from "../../../src/copilot/core/sync/deduplicator.js";
 import { createCopilotUsageDay, createCopilotBreakdown } from "../../helpers/fixtures.js";
 
 describe("computeBreakdownHash", () => {
   it("returns a SHA-256 hex string", () => {
     const hash = computeBreakdownHash(createCopilotUsageDay(), createCopilotBreakdown());
     expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("keeps a chat row's hash unchanged by the surface field", () => {
+    expect(computeBreakdownHash(createCopilotUsageDay(), createCopilotBreakdown())).toBe(
+      "a8abf298c9e1d3069f2a0bcb63d880ad3e41ca3258d25ea2dc36df4f327c03db",
+    );
+  });
+
+  it("hashes CLI and app rows of one developer differently", () => {
+    const day = createCopilotUsageDay();
+
+    expect(computeBreakdownHash(day, createCopilotBreakdown({ surface: "cli" }))).not.toBe(
+      computeBreakdownHash(day, createCopilotBreakdown({ surface: "app" })),
+    );
   });
 
   it("is deterministic for the same inputs", () => {
@@ -40,35 +54,5 @@ describe("computeBreakdownHash", () => {
     const h1 = computeBreakdownHash(day, createCopilotBreakdown({ suggestions_count: 100 }));
     const h2 = computeBreakdownHash(day, createCopilotBreakdown({ suggestions_count: 200 }));
     expect(h1).toBe(h2);
-  });
-});
-
-describe("Deduplicator", () => {
-  it("initializes with existing hashes", () => {
-    const dedup = new Deduplicator(["abc", "def"]);
-    expect(dedup.isDuplicate("abc")).toBe(true);
-    expect(dedup.isDuplicate("xyz")).toBe(false);
-  });
-
-  it("mark adds hash to seen set", () => {
-    const dedup = new Deduplicator([]);
-    dedup.mark("new-hash");
-    expect(dedup.isDuplicate("new-hash")).toBe(true);
-  });
-
-  it("getHashes returns all seen hashes", () => {
-    const dedup = new Deduplicator(["a", "b"]);
-    dedup.mark("c");
-    const hashes = dedup.getHashes();
-    expect(hashes).toContain("a");
-    expect(hashes).toContain("b");
-    expect(hashes).toContain("c");
-    expect(hashes).toHaveLength(3);
-  });
-
-  it("handles empty initialization", () => {
-    const dedup = new Deduplicator([]);
-    expect(dedup.getHashes()).toHaveLength(0);
-    expect(dedup.isDuplicate("anything")).toBe(false);
   });
 });

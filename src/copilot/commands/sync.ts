@@ -14,14 +14,34 @@ import {
   resolveGithubCredential,
 } from "../config/github-credential.js";
 import { runSyncCycle, SyncWatcher } from "../core/sync/scheduler.js";
+import { OrganizationUnreachableError } from "../core/github-client.js";
+import { countWithheldRecords, createBillingReport } from "../core/billing-match.js";
+import { createBillingReportPrinter, printBillingReport } from "../ui/billing-report.js";
 import { LOCK_FILE } from "../constants.js";
-import type { CopilotConfig, SyncResult } from "../types.js";
+import type { BillingReport, CopilotConfig, SyncResult } from "../types.js";
+
+const ALLOW_MISSING_BILLING_HINT =
+  "Pass --allow-missing-billing to import their usage at zero cost instead.";
+
+const BILLING_REMEDY = `The sync window is held at those days, so they are imported on the first run whose token can read billing. ${ALLOW_MISSING_BILLING_HINT}`;
+
+function earliestUnavailableDay(report: BillingReport): string | undefined {
+  return report.unavailable.map((entry) => entry.day).sort()[0];
+}
+
+function billingRemedy(report: BillingReport, fromDate?: string): string {
+  if (!fromDate) return BILLING_REMEDY;
+
+  const earliest = earliestUnavailableDay(report) ?? fromDate;
+  return `A historical run does not rewind saved sync progress, so those days are not fetched again on their own: re-run \`sync --from ${earliest}\` once the token can read billing. ${ALLOW_MISSING_BILLING_HINT}`;
+}
 
 interface SyncOptions extends GithubCredentialOverrides {
   watch?: boolean;
   from?: string;
   to?: string;
   dryRun?: boolean;
+  allowMissingBilling?: boolean;
 }
 
 function getLockPath(): string {
@@ -107,7 +127,7 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
   process.on("exit", syncReleaseLock);
 
   if (options.watch) {
-    await runWatchMode(config, githubCredential, cleanup);
+    await runWatchMode(config, githubCredential, options, cleanup);
   } else {
     await runOnceMode(config, githubCredential, options, cleanup);
   }
@@ -141,16 +161,26 @@ async function runOnceMode(
   }
 
   const spinner = ora("Syncing usage data...").start();
+  const billingReport = createBillingReport();
 
   try {
-    const { result, dryRunPayloads } = await runSyncCycle(
-      config,
-      githubCredential,
-      fromDate,
-      toDate,
-      options.dryRun,
-    );
-    spinner.succeed(`Sync complete: ${formatResult(result)}`);
+    const { result, dryRunPayloads } = await runSyncCycle(config, githubCredential, {
+      from: fromDate,
+      to: toDate,
+      dryRun: options.dryRun,
+      allowMissingBilling: options.allowMissingBilling,
+      billingReport,
+    });
+    const incomplete =
+      result.errors > 0 || (!options.dryRun && countWithheldRecords(billingReport) > 0);
+
+    if (incomplete) {
+      spinner.warn(`Sync incomplete: ${formatResult(result)}`);
+    } else {
+      spinner.succeed(`Sync complete: ${formatResult(result)}`);
+    }
+
+    printBillingReport(billingReport, billingRemedy(billingReport, fromDate));
 
     if (options.dryRun && dryRunPayloads && dryRunPayloads.length > 0) {
       console.log("\n" + chalk.dim("OTLP payload(s):"));
@@ -160,11 +190,21 @@ async function runOnceMode(
     }
 
     if (result.errors > 0) {
-      console.log(chalk.yellow(`\nSome events failed to send (${result.errors} errors)`));
+      console.log(
+        chalk.yellow(
+          `\nRevenium did not accept ${result.errors} event(s). They stay in the sync window and are retried on the next sync.`,
+        ),
+      );
+    }
+
+    if (incomplete) {
+      await cleanup();
+      process.exit(1);
     }
   } catch (error) {
     spinner.fail("Sync failed");
     console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));
+    printBillingReport(billingReport, billingRemedy(billingReport, fromDate));
     await cleanup();
     process.exit(1);
   }
@@ -176,6 +216,7 @@ async function runOnceMode(
 async function runWatchMode(
   config: CopilotConfig,
   githubCredential: GithubCredential,
+  options: SyncOptions,
   cleanup: () => Promise<void>,
 ): Promise<void> {
   console.log(chalk.bold("\nRevenium GitHub Copilot Sync (Watch Mode)\n"));
@@ -185,8 +226,10 @@ async function runWatchMode(
     ),
   );
 
-  const watcher = new SyncWatcher(config, githubCredential);
+  const watcher = new SyncWatcher(config, githubCredential, options.allowMissingBilling);
   let stopping = false;
+  let withheldRecordsDuringRun = false;
+  let organizationUnreachable = false;
 
   const shutdown = async () => {
     if (stopping) return;
@@ -194,26 +237,52 @@ async function runWatchMode(
     console.log(chalk.dim("\nGracefully shutting down..."));
     watcher.stop();
     await cleanup();
-    process.exit(0);
+    process.exit(withheldRecordsDuringRun ? 1 : 0);
   };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
+  const printBillingOnce = createBillingReportPrinter(BILLING_REMEDY);
+
+  const reportBilling = (timestamp: string, billingReport: BillingReport) => {
+    const withheldRecords = countWithheldRecords(billingReport);
+    withheldRecordsDuringRun = withheldRecordsDuringRun || withheldRecords > 0;
+
+    if (withheldRecords > 0) {
+      console.log(
+        chalk.dim(`[${timestamp}]`) +
+          chalk.red(
+            ` billing unavailable for ${billingReport.unavailable.length} day(s), ${withheldRecords} record(s) withheld`,
+          ),
+      );
+    }
+    printBillingOnce(billingReport);
+  };
+
   await watcher.start(
-    (result) => {
+    (result, billingReport) => {
       const timestamp = new Date().toISOString().substring(11, 19);
       if (result.sent > 0 || result.fetched > 0) {
         console.log(chalk.dim(`[${timestamp}]`) + ` ${formatResult(result)}`);
       } else {
         console.log(chalk.dim(`[${timestamp}] no new events`));
       }
+      reportBilling(timestamp, billingReport);
     },
-    (error) => {
+    (error, billingReport) => {
       const timestamp = new Date().toISOString().substring(11, 19);
       console.log(chalk.dim(`[${timestamp}]`) + chalk.red(` error: ${error.message}`));
+      reportBilling(timestamp, billingReport);
+
+      if (error instanceof OrganizationUnreachableError) {
+        organizationUnreachable = true;
+        watcher.stop();
+      }
     },
   );
 
   await cleanup();
+
+  if (organizationUnreachable) process.exit(1);
 }

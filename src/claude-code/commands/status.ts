@@ -3,87 +3,112 @@ import ora from "ora";
 import {
   loadConfig,
   configExists,
-  isEnvLoaded,
-  isToolDetailsLoaded,
-  isToolDetailsExplicitlyDisabled,
   getConfigPath,
-  getFishConfigPath,
+  isCursorProvidedConfig,
 } from "../config/loader.js";
+import {
+  applyTelemetryEnv,
+  readTelemetryEnvSources,
+  resolveLogToolDetails,
+} from "../config/claude-settings.js";
+import type { LogToolDetailsResolution, TelemetryEnvReport } from "../config/claude-settings.js";
 import type { ClaudeCodeConfig } from "../config/loader.js";
-import { ensureToolDetailsExport } from "../config/writer.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { maskApiKey, maskEmail } from "../../_core/utils/masking.js";
-import { detectShell, getProfilePath } from "../../_core/shell/detector.js";
+import { ENV_VARS } from "../constants.js";
 
 export interface StatusOptions {
   fix?: boolean;
 }
 
-// Derives the file to tell the user to `source` from the path actually in use (which may be a
-// REVENIUM_CONFIG_PATH override or the Cursor fallback), not a hardcoded default. Sourcing the
-// wrong file leaves the flag unloaded even after `status --fix` upgrades the real one.
-function getSourceFileHint(configPath: string): string {
-  return process.env.SHELL?.includes("fish") ? getFishConfigPath(configPath) : configPath;
+async function applyTelemetryFix(config: ClaudeCodeConfig): Promise<void> {
+  const result = await applyTelemetryEnv(config);
+
+  if (result.applied) {
+    console.log(chalk.green(`  Re-applied the telemetry settings to ${result.path}`));
+    console.log(chalk.dim("  Start a new Claude Code session to pick them up."));
+    return;
+  }
+
+  console.log(chalk.yellow(`  Could not update ${result.path}: ${result.error}`));
 }
 
-async function applyToolDetailsFix(configPath: string): Promise<void> {
-  const results = await ensureToolDetailsExport();
-  const added = results.filter((result) => result.status === "added");
-
-  if (added.length === 0) {
-    console.log(chalk.dim("  Nothing to fix: OTEL_LOG_TOOL_DETAILS is already set in the config."));
+function reportTelemetry(report: TelemetryEnvReport): void {
+  if (report.error) {
+    console.log(chalk.red(`  Could not read ${report.path}: ${report.error}`));
     return;
   }
 
-  for (const result of added) {
-    console.log(chalk.green(`  Added OTEL_LOG_TOOL_DETAILS=1 to ${result.path}`));
+  const enabled =
+    report.env[ENV_VARS.TELEMETRY_ENABLED] === "1" && !!report.env[ENV_VARS.OTLP_ENDPOINT];
+
+  if (enabled) {
+    console.log(chalk.green(`  Telemetry is enabled for Claude Code in ${report.path}`));
+  } else {
+    console.log(chalk.yellow(`  Telemetry is not enabled for Claude Code in ${report.path}`));
+    console.log(chalk.dim("  Run: revenium-metering setup"));
   }
-  console.log(chalk.dim(`  Run: source ${getSourceFileHint(configPath)}`));
 }
 
-function reportSkillNames(config: ClaudeCodeConfig, configPath: string): void {
-  if (isToolDetailsLoaded()) {
-    console.log(chalk.green("  Skill names: reported (OTEL_LOG_TOOL_DETAILS=1)"));
+function describeResolutionSource(
+  envValue: string | undefined,
+  resolved: LogToolDetailsResolution,
+): string {
+  if (resolved.unreadablePath) return `could not read ${resolved.unreadablePath}`;
+  return envValue === undefined
+    ? "OTEL_LOG_TOOL_DETAILS unset"
+    : `OTEL_LOG_TOOL_DETAILS=${envValue}`;
+}
+
+// The backfill half of this message comes from the same resolution backfill itself uses, so the two
+// commands cannot disagree about whether an import carries skill names.
+function reportSkillNames(report: TelemetryEnvReport, resolved: LogToolDetailsResolution): void {
+  const envValue = report.env[ENV_VARS.LOG_TOOL_DETAILS];
+  const live = envValue === "1" ? "reported in live telemetry" : "redacted in live telemetry";
+  const backfill = resolved.value === false ? "withheld from backfill" : "imported by backfill";
+  const source = describeResolutionSource(envValue, resolved);
+  const line = `  Skill names: ${live}, ${backfill} (${source})`;
+
+  if (envValue === "1" && resolved.value === true) {
+    console.log(chalk.green(line));
     return;
   }
 
-  // Checked before the config-file states below: an explicit shell-level `=0` is an active,
-  // deliberate opt-out and must not be reported as merely "unset", even when the config file on
-  // disk has the flag enabled, because the process-level value wins once the file is sourced.
-  if (isToolDetailsExplicitlyDisabled()) {
+  console.log(chalk.yellow(line));
+
+  if (envValue === "0") {
     console.log(
-      chalk.yellow("  Skill names: redacted (OTEL_LOG_TOOL_DETAILS=0 in the current shell)"),
-    );
-    console.log(
-      chalk.dim(
-        "  This shell explicitly disables tool-detail export; unset it to attribute plugin skill usage.",
-      ),
+      chalk.dim("  Re-run setup without --no-log-tool-details to attribute plugin skill usage."),
     );
     return;
   }
 
-  if (config.logToolDetails === false) {
-    console.log(
-      chalk.yellow("  Skill names: redacted (OTEL_LOG_TOOL_DETAILS=0 in the config file)"),
-    );
-    console.log(
-      chalk.dim(
-        "  Set it to 1 to attribute plugin skill usage, or re-run setup without --no-log-tool-details.",
-      ),
-    );
-    return;
+  if (!resolved.unreadablePath) {
+    console.log(chalk.dim("  Run: revenium-metering status --fix"));
   }
+}
 
-  if (config.logToolDetails === true) {
-    console.log(
-      chalk.yellow("  Skill names: redacted (OTEL_LOG_TOOL_DETAILS unset in this shell)"),
-    );
-    console.log(chalk.dim(`  Run: source ${getSourceFileHint(configPath)}`));
-    return;
-  }
+function reportCursorProvidedConfig(): void {
+  console.log("\n" + chalk.bold("Claude Code settings:"));
+  console.log(chalk.dim("  This configuration was written by the Cursor setup."));
+  console.log(chalk.dim("  Claude Code telemetry settings were not checked."));
+}
 
-  console.log(chalk.yellow("  Skill names: redacted (OTEL_LOG_TOOL_DETAILS unset)"));
-  console.log(chalk.dim("  Run: revenium-metering status --fix"));
+function reportCursorRepairRefusal(): void {
+  console.log(
+    chalk.yellow("  Nothing to repair: this configuration was written by the Cursor setup."),
+  );
+  console.log(chalk.dim("  Run `revenium-metering setup` to also meter Claude Code."));
+}
+
+function reportManagedOverrides(managed: TelemetryEnvReport): void {
+  const overridden = Object.keys(managed.env);
+  if (overridden.length === 0) return;
+
+  console.log(
+    chalk.yellow(`  ${managed.path} overrides: ${overridden.sort().join(", ")}`) +
+      chalk.dim(" (managed by your organization; this CLI never rewrites it)"),
+  );
 }
 
 export async function statusCommand(options: StatusOptions = {}): Promise<void> {
@@ -122,28 +147,29 @@ export async function statusCommand(options: StatusOptions = {}): Promise<void> 
     console.log(`  Product:    ${productValue}`);
   }
 
-  console.log("\n" + chalk.bold("Environment:"));
-  if (isEnvLoaded()) {
-    console.log(chalk.green("  Environment variables are loaded in current shell"));
-  } else {
-    console.log(chalk.yellow("  Environment variables not loaded in current shell"));
-    console.log(chalk.dim(`  Run: source ${getSourceFileHint(configPath)}`));
-  }
-
-  const shellType = detectShell();
-  const profilePath = getProfilePath(shellType);
-  console.log(`  Shell:      ${shellType}`);
-  if (profilePath) {
-    console.log(`  Profile:    ${profilePath}`);
-  }
+  const cursorProvided = isCursorProvidedConfig();
 
   if (options.fix) {
     console.log("\n" + chalk.bold("Repair:"));
-    await applyToolDetailsFix(configPath);
+    if (cursorProvided) {
+      reportCursorRepairRefusal();
+    } else {
+      await applyTelemetryFix(config);
+    }
   }
 
-  console.log("\n" + chalk.bold("Skill attribution:"));
-  reportSkillNames(options.fix ? ((await loadConfig()) ?? config) : config, configPath);
+  if (cursorProvided) {
+    reportCursorProvidedConfig();
+  } else {
+    const { managed, effective } = await readTelemetryEnvSources();
+
+    console.log("\n" + chalk.bold("Claude Code settings:"));
+    reportTelemetry(effective);
+    reportManagedOverrides(managed);
+
+    console.log("\n" + chalk.bold("Skill attribution:"));
+    reportSkillNames(effective, await resolveLogToolDetails(config));
+  }
 
   console.log("\n" + chalk.bold("Endpoint Health:"));
   const spinner = ora("  Testing connectivity...").start();

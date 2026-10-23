@@ -6,10 +6,19 @@ import {
   CURSOR_CONFIG_DIR,
   REVENIUM_CONFIG_DIR,
   ENV_KEYS,
+  LEGACY_CURSOR_API_KEY,
   DEFAULT_SYNC_INTERVAL_MS,
 } from "../constants.js";
-import { REVENIUM_ENV_FILE, DEFAULT_REVENIUM_URL } from "../../_core/constants.js";
-import { parseEnvContent } from "../../_core/config/loader.js";
+import {
+  REVENIUM_ENV_FILE,
+  REVENIUM_FISH_FILE,
+  DEFAULT_REVENIUM_URL,
+} from "../../_core/constants.js";
+import {
+  parseEnvContent,
+  extractBaseEndpoint,
+  readUnknownKeys,
+} from "../../_core/config/loader.js";
 import type { CursorConfig } from "../types.js";
 
 export function getConfigDir(): string {
@@ -20,8 +29,16 @@ export function getConfigPath(): string {
   return join(getConfigDir(), REVENIUM_ENV_FILE);
 }
 
+export function getFishConfigPath(): string {
+  return join(getConfigDir(), REVENIUM_FISH_FILE);
+}
+
 export function configExists(): boolean {
   return existsSync(getConfigPath());
+}
+
+export function findUnknownConfigKeys(): Promise<string[]> {
+  return readUnknownKeys(getConfigPath(), [...Object.values(ENV_KEYS), LEGACY_CURSOR_API_KEY]);
 }
 
 export async function loadConfig(): Promise<CursorConfig | null> {
@@ -35,7 +52,7 @@ export async function loadConfig(): Promise<CursorConfig | null> {
     const content = await readFile(configPath, "utf-8");
     const env = parseEnvContent(content);
 
-    const cursorApiKey = env[ENV_KEYS.CURSOR_API_KEY];
+    const cursorApiKey = env[ENV_KEYS.REVENIUM_CURSOR_API_KEY] || env[LEGACY_CURSOR_API_KEY];
     const reveniumApiKey = env[ENV_KEYS.REVENIUM_API_KEY];
 
     if (!cursorApiKey || !reveniumApiKey) {
@@ -54,7 +71,9 @@ export async function loadConfig(): Promise<CursorConfig | null> {
     return {
       cursorApiKey,
       reveniumApiKey,
-      reveniumEndpoint: env[ENV_KEYS.REVENIUM_ENDPOINT] || DEFAULT_REVENIUM_URL,
+      reveniumEndpoint: extractBaseEndpoint(
+        env[ENV_KEYS.REVENIUM_ENDPOINT] || DEFAULT_REVENIUM_URL,
+      ),
       email: env[ENV_KEYS.SUBSCRIBER_EMAIL] || undefined,
       organizationName: env[ENV_KEYS.ORGANIZATION_NAME] || undefined,
       productName: env[ENV_KEYS.PRODUCT_NAME] || undefined,

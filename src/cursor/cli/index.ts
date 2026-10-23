@@ -7,6 +7,7 @@ import { testCommand } from "../commands/test.js";
 import { syncCommand } from "../commands/sync.js";
 import { resetCommand } from "../commands/reset.js";
 import { backfillCommand } from "../commands/backfill.js";
+import { installEnvProxyDispatcher } from "../../_core/net/proxy.js";
 import pkg from "../../../package.json";
 
 export const program = new Command();
@@ -20,7 +21,7 @@ program
   .command("setup")
   .description("Interactive setup wizard to configure Cursor IDE metering")
   .option("--cursor-api-key <key>", "Cursor Admin API key")
-  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
+  .option("-k, --api-key <key>", "Revenium metering key rev_mk_... (recommended)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")
@@ -70,7 +71,10 @@ program
   .description("Sync Cursor usage events to Revenium (deprecated)")
   .option("-w, --watch", "Run continuously with configured interval")
   .option("--from <date>", "Start date for sync range (ISO 8601)")
-  .option("--to <date>", "End date for sync range (ISO 8601)")
+  .option(
+    "--to <date>",
+    "End date for sync range (ISO 8601). A date-only value covers the whole day in UTC",
+  )
   .action(async (options) => {
     await syncCommand({
       watch: options.watch,
@@ -90,9 +94,12 @@ program
   .command("backfill")
   .description("Import historical Cursor IDE usage data to Revenium")
   .option("--since <date>", "Start date (ISO 8601 or relative: 7d, 1m, 1y)")
-  .option("--to <date>", "End date (ISO 8601, defaults to now)")
+  .option(
+    "--to <date>",
+    "End date (ISO 8601 or relative: 7d, 1m, 1y; defaults to now). A date-only value covers the whole day in UTC",
+  )
   .option("--dry-run", "Preview without sending data")
-  .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
+  .option("--batch-size <size>", "Records per OTLP batch, max 100 (default: 10)", "10")
   .option(
     "--delay <ms>",
     "Minimum delay between Revenium send batches in milliseconds (default: 0)",
@@ -146,5 +153,5 @@ program
   });
 
 if (process.env.NODE_ENV !== "test") {
-  program.parse();
+  void installEnvProxyDispatcher().then(() => program.parse());
 }

@@ -3,6 +3,7 @@ import { sendOtlpLogs } from "../../src/_core/api/otlp-client.js";
 import { createOtlpPayload } from "../../src/claude-code/commands/backfill.js";
 import { generateEnvContent as generateClaudeEnvContent } from "../../src/claude-code/config/writer.js";
 import { generateEnvContent as generateCodexEnvContent } from "../../src/codex-cli/config/writer.js";
+import { buildCodexEnv } from "../../src/codex-cli/config/env.js";
 import { createOtlpCaptureServer, type OtlpCaptureServer } from "../helpers/otlp-capture-server.js";
 
 interface OtlpPayload {
@@ -194,7 +195,7 @@ describe("subscriber email contract (SE-137 / SE-138)", () => {
       expect(otelLine).not.toContain("user.email");
     });
 
-    it("codex-cli: email in OTEL_RESOURCE_ATTRIBUTES and REVENIUM_SUBSCRIBER_EMAIL", () => {
+    it("codex-cli: email in REVENIUM_SUBSCRIBER_EMAIL, encoded only per launched process", () => {
       const envContent = generateCodexEnvContent({
         apiKey: "hak_test",
         email: "codex-live@company.com",
@@ -202,10 +203,11 @@ describe("subscriber email contract (SE-137 / SE-138)", () => {
 
       expect(envContent).toContain("REVENIUM_SUBSCRIBER_EMAIL");
       expect(envContent).toContain("codex-live@company.com");
+      expect(envContent).not.toContain("OTEL_RESOURCE_ATTRIBUTES");
 
-      const otelLine = envContent.split("\n").find((l) => l.includes("OTEL_RESOURCE_ATTRIBUTES"));
-      expect(otelLine).toBeDefined();
-      expect(otelLine).toContain("user.email=codex-live@company.com");
+      expect(buildCodexEnv({ email: "codex-live@company.com" }).OTEL_RESOURCE_ATTRIBUTES).toContain(
+        "user.email=codex-live@company.com",
+      );
     });
 
     it("codex-cli: no email fields when email not configured", () => {

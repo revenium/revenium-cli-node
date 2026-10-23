@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { readFile, writeFile, rename, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { STATE_FILE, DIR_MODE, MAX_RECENT_HASHES } from "../../constants.js";
+import { STATE_FILE, DIR_MODE } from "../../constants.js";
+import { parseSentRecords } from "../../../_core/sync/sent-record-log.js";
 import { CONFIG_FILE_MODE } from "../../../_core/constants.js";
 import { getConfigDir } from "../../config/loader.js";
 import type { SyncState } from "../../types.js";
@@ -16,7 +17,7 @@ function createDefaultState(): SyncState {
     lastSyncTimestamp: 0,
     lastSyncEventCount: 0,
     totalEventsSynced: 0,
-    recentHashes: [],
+    sentRecords: {},
   };
 }
 
@@ -39,9 +40,7 @@ export async function loadState(): Promise<SyncState> {
       lastSyncTimestamp: parsed.lastSyncTimestamp,
       lastSyncEventCount: parsed.lastSyncEventCount || 0,
       totalEventsSynced: parsed.totalEventsSynced || 0,
-      recentHashes: Array.isArray(parsed.recentHashes)
-        ? parsed.recentHashes.slice(-MAX_RECENT_HASHES)
-        : [],
+      sentRecords: parseSentRecords(parsed.sentRecords),
     };
   } catch {
     return createDefaultState();
@@ -55,12 +54,7 @@ export async function saveState(state: SyncState): Promise<void> {
 
   await mkdir(configDir, { recursive: true, mode: DIR_MODE });
 
-  const trimmedState: SyncState = {
-    ...state,
-    recentHashes: state.recentHashes.slice(-MAX_RECENT_HASHES),
-  };
-
-  await writeFile(tmpPath, JSON.stringify(trimmedState, null, 2), {
+  await writeFile(tmpPath, JSON.stringify(state, null, 2), {
     encoding: "utf-8",
   });
 

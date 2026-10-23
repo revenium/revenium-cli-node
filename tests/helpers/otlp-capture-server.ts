@@ -21,9 +21,22 @@ export interface OtlpCaptureServer {
   lastPayload(): unknown | undefined;
 }
 
-const OTLP_LOGS_PATH = `${OTLP_PATH}/v1/logs`;
+const OTLP_SIGNALS = ["logs", "traces"] as const;
 
-export function createOtlpCaptureServer(): OtlpCaptureServer {
+export interface OtlpCaptureServerOptions {
+  basePath?: string;
+}
+
+function normalizeBasePath(basePath?: string): string {
+  const trimmed = (basePath ?? "").replace(/^\/+|\/+$/g, "");
+  return trimmed ? `/${trimmed}` : "";
+}
+
+export function createOtlpCaptureServer(options: OtlpCaptureServerOptions = {}): OtlpCaptureServer {
+  const basePath = normalizeBasePath(options.basePath);
+  const signalPaths = new Map(
+    OTLP_SIGNALS.map((signal) => [`${basePath}${OTLP_PATH}/v1/${signal}`, signal]),
+  );
   let server: Server;
   let port = 0;
   const requests: CapturedRequest[] = [];
@@ -60,10 +73,12 @@ export function createOtlpCaptureServer(): OtlpCaptureServer {
       }
       requestResolvers = [];
 
-      if (req.url === OTLP_LOGS_PATH && req.method === "POST") {
+      const resourceType = signalPaths.get(req.url ?? "");
+
+      if (resourceType && req.method === "POST") {
         const response = JSON.stringify({
           id: `capture-${Date.now()}`,
-          resourceType: "logs",
+          resourceType,
           processedEvents: 1,
           created: new Date().toISOString(),
         });
@@ -82,7 +97,7 @@ export function createOtlpCaptureServer(): OtlpCaptureServer {
       return port;
     },
     get baseUrl() {
-      return `http://127.0.0.1:${port}`;
+      return `http://127.0.0.1:${port}${basePath}`;
     },
     requests,
 

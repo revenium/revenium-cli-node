@@ -17,9 +17,11 @@ import { readFile } from "node:fs/promises";
 import {
   loadConfig,
   getConfigPath,
-  getFishConfigPath,
-  isToolDetailsExplicitlyDisabled,
+  isCursorProvidedConfig,
 } from "../../../src/claude-code/config/loader.js";
+import type { ClaudeCodeConfig } from "../../../src/claude-code/config/loader.js";
+import { generateEnvContent } from "../../../src/claude-code/config/writer.js";
+import { buildClaudeCodeEnv } from "../../../src/claude-code/config/env.js";
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFile = vi.mocked(readFile);
@@ -39,6 +41,10 @@ function buildEnvContent(extras: Record<string, string> = {}): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  // The developer's own shell may export this override; without pinning it the loader reads the
+  // machine's value instead of the file under test.
+  vi.stubEnv("REVENIUM_MGMT_ENDPOINT", "");
   mockExistsSync.mockReturnValue(true);
 });
 
@@ -227,43 +233,48 @@ describe("loadConfig: OTEL_LOG_TOOL_DETAILS", () => {
   });
 });
 
-describe("getFishConfigPath", () => {
-  it("swaps the .env suffix for .fish on the standard path", () => {
-    expect(getFishConfigPath("/home/testuser/.claude/revenium.env")).toBe(
-      "/home/testuser/.claude/revenium.fish",
-    );
-  });
+describe("loadConfig — every key the writer emits survives a round-trip", () => {
+  it("rebuilds an identical telemetry env from the file it wrote", async () => {
+    const original: ClaudeCodeConfig = {
+      apiKey: "hak_testkey123",
+      endpoint: "https://api.revenium.ai",
+      email: "user@example.com",
+      extraUsageEnabled: true,
+      organizationName: "Acme",
+      productName: "Prod",
+      ticketIdRegex: "[A-Z]+-\\d+",
+      blockPolicy: "hard-block",
+      teamId: "teamHash123",
+      logToolDetails: false,
+      managementEndpoint: "https://api.revenium.ai",
+    };
+    mockReadFile.mockResolvedValue(generateEnvContent(original) as unknown as Buffer);
 
-  it("returns the same path unchanged for a REVENIUM_CONFIG_PATH override without a .env suffix", () => {
-    // A custom override has no separate fish file, so callers must treat an unchanged return value
-    // as "no fish companion", not upgrade the same file twice under two shell dialects.
-    expect(getFishConfigPath("/tmp/revenium-local-e2e")).toBe("/tmp/revenium-local-e2e");
+    const loaded = await loadConfig();
+
+    expect(buildClaudeCodeEnv(loaded!)).toEqual(buildClaudeCodeEnv(original));
   });
 });
 
-describe("isToolDetailsExplicitlyDisabled", () => {
-  const ORIGINAL = process.env.OTEL_LOG_TOOL_DETAILS;
+describe("getConfigPath — Claude Code file wins over the Cursor file", () => {
+  it("returns the Claude Code file when both exist", () => {
+    mockExistsSync.mockReturnValue(true);
 
-  afterEach(() => {
-    if (ORIGINAL === undefined) {
-      delete process.env.OTEL_LOG_TOOL_DETAILS;
-    } else {
-      process.env.OTEL_LOG_TOOL_DETAILS = ORIGINAL;
-    }
+    expect(getConfigPath()).toBe("/home/testuser/.claude/revenium.env");
+    expect(isCursorProvidedConfig()).toBe(false);
   });
 
-  it("is true when the shell explicitly exports 0", () => {
-    process.env.OTEL_LOG_TOOL_DETAILS = "0";
-    expect(isToolDetailsExplicitlyDisabled()).toBe(true);
+  it("falls back to the Cursor file when only it exists", () => {
+    mockExistsSync.mockImplementation((path) => String(path).includes(".cursor"));
+
+    expect(getConfigPath()).toBe("/home/testuser/.cursor/revenium/revenium.env");
+    expect(isCursorProvidedConfig()).toBe(true);
   });
 
-  it("is false when the shell exports 1", () => {
-    process.env.OTEL_LOG_TOOL_DETAILS = "1";
-    expect(isToolDetailsExplicitlyDisabled()).toBe(false);
-  });
+  it("reports the Claude Code file as the source when neither exists", () => {
+    mockExistsSync.mockReturnValue(false);
 
-  it("is false when the shell does not export the flag at all", () => {
-    delete process.env.OTEL_LOG_TOOL_DETAILS;
-    expect(isToolDetailsExplicitlyDisabled()).toBe(false);
+    expect(getConfigPath()).toBe("/home/testuser/.claude/revenium.env");
+    expect(isCursorProvidedConfig()).toBe(false);
   });
 });

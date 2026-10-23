@@ -33,6 +33,7 @@ set +e
   -v "${workspace}:/repo" \
   "$image" \
   git \
+    --config=/repo/.gitleaks.toml \
     --log-opts="$log_opts" \
     --redact \
     --verbose \

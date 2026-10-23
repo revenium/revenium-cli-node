@@ -9,11 +9,25 @@ import {
 } from "../config/github-credential.js";
 import { fetchUsageDays } from "../core/github-client.js";
 import { buildOtlpPayload, isValidDay } from "../core/transform/otlp-mapper.js";
-import { computeBreakdownHash, Deduplicator } from "../core/sync/deduplicator.js";
+import { computeBreakdownHash } from "../core/sync/deduplicator.js";
+import { appendBreakdown } from "../core/sync/pending-days.js";
+import { Deduplicator } from "../../_core/sync/deduplicator.js";
+import {
+  countWithheldRecords,
+  createBillingReport,
+  recordBillingFetch,
+} from "../core/billing-match.js";
+import { printBillingReport } from "../ui/billing-report.js";
+import { COPILOT_METRICS_POLICY_HINT } from "../constants.js";
+import { BACKFILL_DEDUP_WINDOW_RECORDS } from "../../_core/constants.js";
 import { MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE } from "../../_core/api/rate-limiter.js";
 import { sendTracesWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
+import { FailedBatchLog, reportBackfillOutcome } from "../../_core/ui/backfill-outcome.js";
 import type { CopilotUsageDay } from "../types.js";
+
+const BILLING_REMEDY =
+  "Re-run the backfill over those days once the token can read billing. Pass --allow-missing-billing to import their usage at zero cost instead.";
 
 export interface BackfillOptions extends GithubCredentialOverrides {
   since?: string;
@@ -22,6 +36,7 @@ export interface BackfillOptions extends GithubCredentialOverrides {
   batchSize?: number;
   delay?: number;
   verbose?: boolean;
+  allowMissingBilling?: boolean;
 }
 
 export function parseRelativeDate(input: string): Date | null {
@@ -67,6 +82,28 @@ function formatDateParam(date: Date): string {
   return date.toISOString().split("T")[0];
 }
 
+function printEmptyOutcome(withheldRecords: number, fetchedDayCount: number, since?: string): void {
+  if (withheldRecords > 0) {
+    console.log(
+      chalk.yellow(
+        "\nEvery record of the fetched days carries cost, and their billing data could not be read. Nothing was imported.",
+      ),
+    );
+    return;
+  }
+
+  if (fetchedDayCount > 0) {
+    console.log(chalk.yellow("\nAll fetched records were duplicates. Nothing to backfill."));
+    return;
+  }
+
+  console.log(chalk.yellow("\nNo usage data found in the specified date range."));
+  if (since) {
+    console.log(chalk.dim("Try a broader date range or remove the --since filter."));
+  }
+  console.log(chalk.dim(COPILOT_METRICS_POLICY_HINT));
+}
+
 export async function backfillCommand(options: BackfillOptions = {}): Promise<void> {
   const {
     since,
@@ -75,6 +112,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     batchSize: rawBatchSize = DEFAULT_BATCH_SIZE,
     delay = 0,
     verbose = false,
+    allowMissingBilling = false,
   } = options;
 
   if (!Number.isInteger(rawBatchSize) || rawBatchSize < 1) {
@@ -143,77 +181,151 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     toDate = new Date();
   }
 
-  const fetchSpinner = ora("Fetching historical usage data from GitHub API...").start();
-  const allDays: CopilotUsageDay[] = [];
+  const spinner = ora("Fetching historical usage data from GitHub API...").start();
+  const billingReport = createBillingReport();
+
+  const deduplicator = new Deduplicator([], BACKFILL_DEDUP_WINDOW_RECORDS);
+  const pendingDays: CopilotUsageDay[] = [];
+  const sampleDays: CopilotUsageDay[] = [];
+  const failures = new FailedBatchLog();
+
+  const fetchedDays = new Set<string>();
+  let totalBreakdowns = 0;
+  let duplicateBreakdowns = 0;
+  let uniqueBreakdownCount = 0;
+  let totalSuggestions = 0;
+  let totalAcceptances = 0;
+  let pendingRecords = 0;
+  let batchNumber = 0;
+  let sentBatches = 0;
+  let sentRecords = 0;
+  let lastSentMarker: string | undefined;
+  let fetchError: string | undefined;
+
+  const progressText = (): string =>
+    dryRun
+      ? `Fetching usage data... (${fetchedDays.size} days so far)`
+      : `Fetched ${fetchedDays.size} days, sent ${sentRecords} records in ${sentBatches} batches...`;
+
+  const flushPending = async (): Promise<void> => {
+    if (pendingDays.length === 0) return;
+
+    const batch = pendingDays.splice(0);
+    const recordCount = pendingRecords;
+    pendingRecords = 0;
+
+    if (dryRun) {
+      if (verbose && sampleDays.length === 0) {
+        sampleDays.push(...batch.slice(0, Math.min(batchSize, 3)));
+      }
+      return;
+    }
+
+    batchNumber++;
+
+    try {
+      if (batchNumber === 1) {
+        await startupStagger();
+      }
+
+      const result = await sendTracesWithResult(
+        config.reveniumEndpoint,
+        config.reveniumApiKey,
+        buildOtlpPayload(batch, config),
+        { batchSize: recordCount, userDelayMs: delay },
+      );
+
+      if (result.success) {
+        sentBatches++;
+        sentRecords += recordCount;
+        lastSentMarker = batch[batch.length - 1].day;
+      } else {
+        failures.record(batchNumber, result.error || "Unknown error");
+      }
+    } catch (error) {
+      failures.record(batchNumber, error instanceof Error ? error.message : "Unknown error");
+    }
+
+    spinner.text = progressText();
+  };
 
   try {
-    for await (const batch of fetchUsageDays(
+    for await (const usageFetch of fetchUsageDays(
       githubCredential.token,
       githubCredential.orgName,
       formatDateParam(sinceDate),
       formatDateParam(toDate),
+      { allowMissingBilling },
     )) {
-      allDays.push(...batch);
-      fetchSpinner.text = `Fetching usage data... (${allDays.length} days so far)`;
-    }
-    fetchSpinner.succeed(`Fetched ${allDays.length} days of usage data from GitHub API`);
-  } catch (error) {
-    fetchSpinner.fail("Failed to fetch usage data from GitHub API");
-    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));
-    process.exit(1);
-  }
-
-  if (allDays.length === 0) {
-    console.log(chalk.yellow("\nNo usage data found in the specified date range."));
-    if (since) {
-      console.log(chalk.dim("Try a broader date range or remove the --since filter."));
-    }
-    return;
-  }
-
-  const deduplicator = new Deduplicator([]);
-  const uniqueDays: CopilotUsageDay[] = [];
-  let totalBreakdowns = 0;
-  let duplicateBreakdowns = 0;
-
-  for (const day of allDays) {
-    if (!isValidDay(day.day)) continue;
-
-    const uniqueBreakdowns = [];
-    for (const breakdown of day.breakdown) {
-      totalBreakdowns++;
-      const hash = computeBreakdownHash(day, breakdown);
-      if (deduplicator.isDuplicate(hash)) {
-        duplicateBreakdowns++;
-        continue;
+      recordBillingFetch(billingReport, usageFetch);
+      for (const entry of usageFetch.billingUnavailable) {
+        if (entry.withheldRecords > 0 || entry.zeroCostRecords > 0) {
+          fetchedDays.add(entry.day);
+        }
       }
-      deduplicator.mark(hash);
-      uniqueBreakdowns.push(breakdown);
+
+      for (const day of usageFetch.days) {
+        fetchedDays.add(day.day);
+        if (!isValidDay(day.day)) continue;
+
+        for (const breakdown of day.breakdown) {
+          totalBreakdowns++;
+
+          const hash = computeBreakdownHash(day, breakdown);
+          if (deduplicator.isDuplicate(hash)) {
+            duplicateBreakdowns++;
+            continue;
+          }
+          deduplicator.mark(hash);
+
+          uniqueBreakdownCount++;
+          totalSuggestions += breakdown.suggestions_count;
+          totalAcceptances += breakdown.acceptances_count;
+
+          appendBreakdown(pendingDays, day, breakdown);
+          pendingRecords++;
+
+          if (pendingRecords >= batchSize) {
+            await flushPending();
+          }
+        }
+      }
+
+      spinner.text = progressText();
     }
 
-    if (uniqueBreakdowns.length > 0) {
-      uniqueDays.push({ ...day, breakdown: uniqueBreakdowns });
-    }
+    await flushPending();
+  } catch (error) {
+    fetchError = error instanceof Error ? error.message : "Unknown error";
+    await flushPending();
   }
 
-  const uniqueBreakdownCount = totalBreakdowns - duplicateBreakdowns;
+  const withheldRecords = countWithheldRecords(billingReport);
+
+  if (fetchError) {
+    spinner.fail("Failed to fetch usage data from GitHub API");
+    console.error(chalk.red(`Error: ${fetchError}`));
+  } else if (withheldRecords > 0) {
+    spinner.warn(
+      `Fetched ${fetchedDays.size} days of usage data from GitHub API, ${withheldRecords} record(s) withheld`,
+    );
+  } else {
+    spinner.succeed(`Fetched ${fetchedDays.size} days of usage data from GitHub API`);
+  }
 
   if (uniqueBreakdownCount === 0) {
-    console.log(chalk.yellow("\nAll fetched records were duplicates. Nothing to backfill."));
+    if (!fetchError) {
+      printEmptyOutcome(withheldRecords, fetchedDays.size, since);
+    }
+    printBillingReport(billingReport, BILLING_REMEDY);
+    if (fetchError || (!dryRun && withheldRecords > 0)) {
+      process.exitCode = 1;
+    }
     return;
   }
 
-  const totalSuggestions = uniqueDays.reduce(
-    (sum, d) => sum + d.breakdown.reduce((s, b) => s + b.suggestions_count, 0),
-    0,
-  );
-  const totalAcceptances = uniqueDays.reduce(
-    (sum, d) => sum + d.breakdown.reduce((s, b) => s + b.acceptances_count, 0),
-    0,
-  );
-
   console.log("\n" + chalk.bold("Summary:"));
-  console.log(`  Days fetched:     ${allDays.length}`);
+  console.log(`  Days fetched:     ${fetchedDays.size}`);
   console.log(`  Total records:    ${totalBreakdowns.toLocaleString()}`);
   console.log(`  Unique records:   ${uniqueBreakdownCount.toLocaleString()}`);
   if (duplicateBreakdowns > 0) {
@@ -221,68 +333,43 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   }
   console.log(`  Suggestions:      ${totalSuggestions.toLocaleString()}`);
   console.log(`  Acceptances:      ${totalAcceptances.toLocaleString()}`);
+  if (withheldRecords > 0) {
+    console.log(`  Records withheld: ${withheldRecords.toLocaleString()}`);
+  }
+
+  printBillingReport(billingReport, BILLING_REMEDY);
 
   if (dryRun) {
-    console.log("\n" + chalk.yellow("Dry run complete. Use without --dry-run to send data."));
+    console.log(
+      "\n" +
+        (fetchError
+          ? chalk.red(
+              "Dry run incomplete: fetching stopped mid-run, so the totals above cover only the days fetched before the error.",
+            )
+          : chalk.yellow("Dry run complete. Use without --dry-run to send data.")),
+    );
 
-    if (verbose) {
+    if (verbose && sampleDays.length > 0) {
       console.log("\n" + chalk.dim("Sample OTLP payload (first batch):"));
-      const sampleDays = uniqueDays.slice(0, Math.min(batchSize, 3));
-      const samplePayload = buildOtlpPayload(sampleDays, config);
-      console.log(chalk.dim(JSON.stringify(samplePayload, null, 2)));
+      console.log(chalk.dim(JSON.stringify(buildOtlpPayload(sampleDays, config), null, 2)));
+    }
+    if (fetchError) {
+      process.exitCode = 1;
     }
     return;
   }
 
-  const totalBatches = Math.ceil(uniqueDays.length / batchSize);
-  const sendSpinner = ora(`Sending data... (0/${totalBatches} batches)`).start();
-  await startupStagger();
-  let sentBatches = 0;
-  let sentRecords = 0;
-  let permanentlyFailedBatches = 0;
-  const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
-  for (let i = 0; i < uniqueDays.length; i += batchSize) {
-    const batchNumber = Math.floor(i / batchSize) + 1;
-    const batch = uniqueDays.slice(i, i + batchSize);
-    const payload = buildOtlpPayload(batch, config);
-    const batchRecordCount = batch.reduce((sum, d) => sum + d.breakdown.length, 0);
-
-    sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
-
-    const result = await sendTracesWithResult(
-      config.reveniumEndpoint,
-      config.reveniumApiKey,
-      payload,
-      { batchSize: batchRecordCount, userDelayMs: delay },
-    );
-
-    if (result.success) {
-      sentBatches++;
-      sentRecords += batchRecordCount;
-      sendSpinner.text = `Sending data... (${sentBatches}/${totalBatches} batches)`;
-    } else {
-      permanentlyFailedBatches++;
-      failedBatchDetails.push({
-        batchNumber,
-        error: result.error || "Unknown error",
-      });
-    }
+  const complete = reportBackfillOutcome(spinner, {
+    sentRecords,
+    sentBatches,
+    failedBatches: failures.entries,
+    omittedFailures: failures.omitted,
+    lastSentMarker,
+    fetchError,
+    withheldRecords,
+  });
+  if (!complete) {
+    process.exitCode = 1;
   }
-
-  if (permanentlyFailedBatches === 0) {
-    sendSpinner.succeed(`Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches`);
-  } else {
-    sendSpinner.warn(
-      `Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches (${permanentlyFailedBatches} failed)`,
-    );
-
-    console.log("\n" + chalk.red.bold("Failed Batches:"));
-    for (const failed of failedBatchDetails) {
-      console.log(chalk.red(`  Batch ${failed.batchNumber}: ${failed.error}`));
-    }
-  }
-
-  console.log("\n" + chalk.green.bold("Backfill complete!"));
-  console.log(chalk.dim("Check your Revenium dashboard to see the imported data."));
   console.log("");
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeEventHash, Deduplicator } from "../../../src/cursor/core/sync/deduplicator.js";
+import { computeEventHash } from "../../../src/cursor/core/sync/deduplicator.js";
 import { createUsageEvent } from "../../helpers/fixtures.js";
 
 describe("computeEventHash", () => {
@@ -70,35 +70,5 @@ describe("computeEventHash", () => {
       }),
     );
     expect(h1).not.toBe(h2);
-  });
-});
-
-describe("Deduplicator", () => {
-  it("initializes with existing hashes", () => {
-    const dedup = new Deduplicator(["abc", "def"]);
-    expect(dedup.isDuplicate("abc")).toBe(true);
-    expect(dedup.isDuplicate("xyz")).toBe(false);
-  });
-
-  it("mark adds hash to seen set", () => {
-    const dedup = new Deduplicator([]);
-    dedup.mark("new-hash");
-    expect(dedup.isDuplicate("new-hash")).toBe(true);
-  });
-
-  it("getHashes returns all seen hashes", () => {
-    const dedup = new Deduplicator(["a", "b"]);
-    dedup.mark("c");
-    const hashes = dedup.getHashes();
-    expect(hashes).toContain("a");
-    expect(hashes).toContain("b");
-    expect(hashes).toContain("c");
-    expect(hashes).toHaveLength(3);
-  });
-
-  it("handles empty initialization", () => {
-    const dedup = new Deduplicator([]);
-    expect(dedup.getHashes()).toHaveLength(0);
-    expect(dedup.isDuplicate("anything")).toBe(false);
   });
 });

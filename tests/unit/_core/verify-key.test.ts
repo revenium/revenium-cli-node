@@ -33,17 +33,36 @@ describe("verifyApiKey", () => {
     expect(result).toBe(false);
   });
 
-  it("returns false on network error (fetch throws)", async () => {
-    mockFetchReject(new Error("Network error"));
-    const result = await verifyApiKey("https://api.revenium.ai", "hak_test_key");
-    expect(result).toBe(false);
+  it("throws the underlying cause instead of reporting an invalid key", async () => {
+    mockFetchReject(
+      Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "DEPTH_ZERO_SELF_SIGNED_CERT", message: "self signed certificate" },
+      }),
+    );
+
+    await expect(verifyApiKey("https://api.revenium.ai", "hak_test_key")).rejects.toThrow(
+      /DEPTH_ZERO_SELF_SIGNED_CERT/,
+    );
   });
 
-  it("returns false on timeout (AbortError)", async () => {
-    const abortError = new DOMException("The operation was aborted.", "AbortError");
-    mockFetchReject(abortError);
-    const result = await verifyApiKey("https://api.revenium.ai", "hak_test_key");
-    expect(result).toBe(false);
+  it("throws on timeout (AbortError)", async () => {
+    mockFetchReject(new DOMException("The operation was aborted.", "AbortError"));
+    await expect(verifyApiKey("https://api.revenium.ai", "hak_test_key")).rejects.toThrow(
+      /Request timeout after 10000ms[\s\S]*never answered/,
+    );
+  });
+
+  it("does not leak the API key carried in the cause", async () => {
+    const apiKey = "hak_tenant_abc123xyz";
+    mockFetchReject(
+      Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "ENOTFOUND", message: `getaddrinfo ENOTFOUND for key ${apiKey}` },
+      }),
+    );
+
+    await expect(verifyApiKey("https://api.revenium.ai", apiKey)).rejects.toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining(apiKey) }),
+    );
   });
 
   it("correctly constructs URL from endpoint (strips trailing slashes)", async () => {

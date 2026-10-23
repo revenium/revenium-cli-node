@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   escapeShellValue,
-  escapeDoubleQuotedShellValue,
   escapeFishValue,
   escapeResourceAttributeValue,
+  stripNewlines,
 } from "../../../src/_core/shell/escaping.js";
+import { parseEnvContent } from "../../../src/_core/config/loader.js";
+import { HOSTILE_SHELL_VALUES } from "../../helpers/shell-env.js";
 
 describe("escapeShellValue", () => {
   it("wraps in single quotes", () => {
@@ -29,34 +31,6 @@ describe("escapeShellValue", () => {
 
   it("strips carriage return alone", () => {
     expect(escapeShellValue("hello\rworld")).toBe(escapeShellValue("helloworld"));
-  });
-});
-
-describe("escapeDoubleQuotedShellValue", () => {
-  it("wraps in double quotes", () => {
-    expect(escapeDoubleQuotedShellValue("hello")).toBe('"hello"');
-  });
-
-  it("escapes backslashes, double quotes, dollar signs and backticks", () => {
-    expect(escapeDoubleQuotedShellValue('a\\b"c$d`e')).toBe('"a\\\\b\\"c\\$d\\`e"');
-  });
-
-  it("strips newline characters", () => {
-    expect(escapeDoubleQuotedShellValue("hello\nworld")).toBe(
-      escapeDoubleQuotedShellValue("helloworld"),
-    );
-  });
-
-  it("strips carriage return + newline", () => {
-    expect(escapeDoubleQuotedShellValue("hello\r\nworld")).toBe(
-      escapeDoubleQuotedShellValue("helloworld"),
-    );
-  });
-
-  it("strips carriage return alone", () => {
-    expect(escapeDoubleQuotedShellValue("hello\rworld")).toBe(
-      escapeDoubleQuotedShellValue("helloworld"),
-    );
   });
 });
 
@@ -134,6 +108,18 @@ describe("escapeResourceAttributeValue", () => {
   it("strips carriage return alone", () => {
     expect(escapeResourceAttributeValue("hello\rworld")).toBe(
       escapeResourceAttributeValue("helloworld"),
+    );
+  });
+});
+
+describe("escaper and parser symmetry", () => {
+  it.each(HOSTILE_SHELL_VALUES)("round-trips %j through the POSIX parser", (value) => {
+    expect(parseEnvContent(`K=${escapeShellValue(value)}`).K).toBe(stripNewlines(value));
+  });
+
+  it.each(HOSTILE_SHELL_VALUES)("round-trips %j through the fish parser", (value) => {
+    expect(parseEnvContent(`set -gx K ${escapeFishValue(value)}`, true).K).toBe(
+      stripNewlines(value),
     );
   });
 });

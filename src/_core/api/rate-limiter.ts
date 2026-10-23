@@ -3,6 +3,7 @@ import { DEFAULT_TARGET_TPS, getTargetTps } from "./resilience.js";
 export { DEFAULT_TARGET_TPS };
 export const MAX_BATCH_SIZE = 100;
 export const DEFAULT_BATCH_SIZE = 10;
+export const MIN_REQUEST_INTERVAL_MS = 1000;
 
 export interface RateLimiterState {
   nextAvailableTimeMs: number;
@@ -31,7 +32,7 @@ export async function enforceRateLimit(
 
   const now = Date.now();
 
-  const requiredIntervalMs = (batchSize / targetTps) * 1000;
+  const requiredIntervalMs = Math.max((batchSize / targetTps) * 1000, MIN_REQUEST_INTERVAL_MS);
   const earliestNextTime = Math.max(state.nextAvailableTimeMs, now);
   const calculatedDelay = earliestNextTime - now;
   const finalDelay = Math.max(calculatedDelay, userDelayMs);

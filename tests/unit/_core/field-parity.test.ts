@@ -27,13 +27,43 @@ const TOKEN_FIELD_KEYS = [
 function makeClaudeRecord(): ParsedRecord {
   return {
     sessionId: "session-abc",
+    projectPath: "/Users/dev/acme",
     timestamp: "2024-06-01T12:00:00.000Z",
     model: "claude-3-5-sonnet-20241022",
     inputTokens: 100,
     outputTokens: 50,
     cacheReadTokens: 10,
     cacheCreationTokens: 5,
+    cacheCreation1hTokens: 3,
+    cacheCreation5mTokens: 2,
+    speed: "fast",
+    inferenceGeo: "us",
+    webSearchRequests: 3,
+    costUsd: 0.25,
+    requestId: "req_123",
+    messageId: "msg_123",
+    stopReason: "end_turn",
+    toolNames: ["Read", "Edit"],
   };
+}
+
+function makeClaudeSkillRecord(): ParsedRecord {
+  return {
+    ...makeClaudeRecord(),
+    sessionId: "session-skill",
+    messageId: "msg_456",
+    requestId: "req_456",
+    skillName: "graphify",
+  };
+}
+
+function extractAllLogAttributes(payload: Record<string, unknown>) {
+  const rl = payload.resourceLogs as Array<Record<string, unknown>>;
+  const sl = rl[0].scopeLogs as Array<Record<string, unknown>>;
+  const lr = sl[0].logRecords as Array<Record<string, unknown>>;
+  return lr.flatMap(
+    (record) => record.attributes as Array<{ key: string; value: Record<string, unknown> }>,
+  );
 }
 
 function extractLogAttributes(payload: Record<string, unknown>) {
@@ -139,8 +169,10 @@ describe("Claude Code backfill field parity", () => {
   });
 
   it("all log attributes exist in the field registry", () => {
-    const payload = createOtlpPayload([makeClaudeRecord()], { email: "dev@co.com" });
-    const attrs = extractLogAttributes(payload);
+    const payload = createOtlpPayload([makeClaudeRecord(), makeClaudeSkillRecord()], {
+      email: "dev@co.com",
+    });
+    const attrs = extractAllLogAttributes(payload);
     const registeredKeys = getFieldsForPlatform("claude-code", "log").map((f) => f.key);
 
     for (const attr of attrs) {
@@ -149,8 +181,10 @@ describe("Claude Code backfill field parity", () => {
   });
 
   it("all log attribute types match the registry", () => {
-    const payload = createOtlpPayload([makeClaudeRecord()], { email: "dev@co.com" });
-    const attrs = extractLogAttributes(payload);
+    const payload = createOtlpPayload([makeClaudeRecord(), makeClaudeSkillRecord()], {
+      email: "dev@co.com",
+    });
+    const attrs = extractAllLogAttributes(payload);
     const registry = getFieldsForPlatform("claude-code", "log");
 
     for (const attr of attrs) {

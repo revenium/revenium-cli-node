@@ -4,6 +4,7 @@ import type { CopilotUsageDay, CopilotUsageBreakdown, CopilotConfig } from "../.
 import { SERVICE_NAME, SCOPE_NAME } from "../../constants.js";
 
 const SPAN_KIND_CLIENT = 3;
+const TOKEN_COUNTS_EXCLUDED_FROM_TRANSACTION_ID = "0|0";
 
 export function isValidDay(day: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(day) && !isNaN(new Date(day).getTime());
@@ -13,10 +14,8 @@ export function generateTransactionId(
   conversationId: string,
   startTimeUnixNano: string,
   model: string,
-  inputTokens: number,
-  outputTokens: number,
 ): string {
-  const raw = `${conversationId}|${startTimeUnixNano}|${model}|${inputTokens}|${outputTokens}`;
+  const raw = `${conversationId}|${startTimeUnixNano}|${model}|${TOKEN_COUNTS_EXCLUDED_FROM_TRANSACTION_ID}`;
   return createHash("sha256").update(raw).digest("hex").substring(0, 32);
 }
 
@@ -41,9 +40,12 @@ function mapBreakdownToSpan(
 ): OTLPTracesPayload["resourceSpans"][0]["scopeSpans"][0]["spans"][0] {
   const startNano = dayToUnixNano(day.day);
   const model = breakdown.model || "copilot";
-  const userPart = breakdown.user_login || "unknown";
-  const conversationId = `copilot-usage-${day.day}-${userPart}-${breakdown.language}-${model}-${breakdown.editor}`;
-  const transactionId = generateTransactionId(conversationId, startNano, model, 0, 0);
+  const seatHolder = breakdown.user_login?.trim();
+  const baseConversationId = `copilot-usage-${day.day}-${seatHolder || "unknown"}-${breakdown.language}-${model}-${breakdown.editor}`;
+  const conversationId = breakdown.surface
+    ? `${baseConversationId}-${breakdown.surface}`
+    : baseConversationId;
+  const transactionId = generateTransactionId(conversationId, startNano, model);
 
   const attributes: Array<{
     key: string;
@@ -51,8 +53,8 @@ function mapBreakdownToSpan(
   }> = [
     { key: "gen_ai.request.model", value: { stringValue: model } },
     { key: "gen_ai.system", value: { stringValue: "github" } },
-    { key: "gen_ai.usage.input_tokens", value: { intValue: 0 } },
-    { key: "gen_ai.usage.output_tokens", value: { intValue: 0 } },
+    { key: "gen_ai.usage.input_tokens", value: { intValue: breakdown.input_tokens } },
+    { key: "gen_ai.usage.output_tokens", value: { intValue: breakdown.output_tokens } },
     { key: "gen_ai.conversation.id", value: { stringValue: conversationId } },
     { key: "gen_ai.response.finish_reasons", value: { stringValue: "stop" } },
     { key: "transaction_id", value: { stringValue: transactionId } },
@@ -66,12 +68,23 @@ function mapBreakdownToSpan(
     { key: "copilot.usage.editor", value: { stringValue: breakdown.editor } },
   ];
 
-  if (breakdown.cost_usd > 0) {
-    attributes.push({ key: "cost_usd", value: { doubleValue: breakdown.cost_usd } });
+  if (breakdown.surface) {
+    attributes.push({ key: "copilot.usage.surface", value: { stringValue: breakdown.surface } });
   }
 
-  if (config.email) {
-    attributes.push({ key: "user.email", value: { stringValue: config.email } });
+  if (breakdown.ai_credits > 0) {
+    attributes.push({
+      key: "copilot.usage.ai_credits",
+      value: { doubleValue: breakdown.ai_credits },
+    });
+  }
+
+  if (seatHolder) {
+    attributes.push({ key: "revenium.subscriber.id", value: { stringValue: seatHolder } });
+  }
+
+  if (breakdown.cost_usd > 0) {
+    attributes.push({ key: "cost_usd", value: { doubleValue: breakdown.cost_usd } });
   }
 
   if (config.organizationName) {

@@ -1,7 +1,8 @@
 import chalk from "chalk";
 import ora from "ora";
-import { readCodexToml, extractOtelValues, getCodexConfigPath } from "../config/loader.js";
+import { readCodexToml, resolveOtelCredentials, getCodexConfigPath } from "../config/loader.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
+import { sanitizeErrorMessage } from "../../_core/api/resilience.js";
 import { generateTestSessionId } from "../../_core/api/health-check.js";
 import { createCodexMapperTestPayload } from "../payloads/test-payload.js";
 
@@ -22,9 +23,10 @@ export async function testAction(options: TestOptions = {}): Promise<void> {
     return;
   }
 
-  const otelValues = extractOtelValues(toml);
+  const otelValues = await resolveOtelCredentials(toml, options.configPath);
   if (!otelValues) {
-    console.log(chalk.red("Could not parse [otel] block from Codex config"));
+    console.log(chalk.red("No Revenium endpoint and API key found in the Codex configuration"));
+    console.log(chalk.yellow("Run `revenium-codex setup --force` to rewrite it."));
     process.exit(1);
     return;
   }
@@ -34,7 +36,9 @@ export async function testAction(options: TestOptions = {}): Promise<void> {
 
   if (options.verbose) {
     console.log(chalk.dim("Test payload:"));
-    console.log(chalk.dim(JSON.stringify(payload, null, 2)));
+    console.log(
+      chalk.dim(sanitizeErrorMessage(JSON.stringify(payload, null, 2), otelValues.apiKey)),
+    );
     console.log("");
   }
 

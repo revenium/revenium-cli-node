@@ -1,5 +1,7 @@
 export const GEMINI_CONFIG_DIR = ".gemini";
 
+export const SHELL_PROFILE_MARKER = "revenium-gemini-cli-metering";
+
 export const ENV_VARS = {
   TELEMETRY_ENABLED: "GEMINI_TELEMETRY_ENABLED",
   TELEMETRY_TARGET: "GEMINI_TELEMETRY_TARGET",

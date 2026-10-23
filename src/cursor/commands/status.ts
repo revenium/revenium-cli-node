@@ -1,9 +1,12 @@
 import chalk from "chalk";
 import ora from "ora";
-import { loadConfig, configExists, getConfigPath } from "../config/loader.js";
+import { configExists, getConfigPath, findUnknownConfigKeys } from "../config/loader.js";
+import { loadMigratedConfig } from "./migrated-config.js";
+import { printUnknownConfigKeys } from "../../_core/ui/unknown-config-keys.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { testConnectivity } from "../core/cursor-client.js";
 import { loadState } from "../core/sync/state-manager.js";
+import { countSentRecords } from "../../_core/sync/sent-record-log.js";
 import { maskApiKey, maskEmail } from "../../_core/utils/masking.js";
 
 export async function statusCommand(): Promise<void> {
@@ -20,7 +23,9 @@ export async function statusCommand(): Promise<void> {
   console.log(chalk.green("Configuration file found"));
   console.log(chalk.dim(`  ${configPath}`));
 
-  const config = await loadConfig();
+  printUnknownConfigKeys(configPath, await findUnknownConfigKeys());
+
+  const config = await loadMigratedConfig();
   if (!config) {
     console.log(chalk.red("\nCould not parse configuration file"));
     console.log(chalk.yellow("Run `revenium-cursor setup` to reconfigure."));
@@ -49,7 +54,7 @@ export async function statusCommand(): Promise<void> {
     console.log(`  Last Sync:        ${lastSync.toISOString()}`);
     console.log(`  Last Sync Events: ${state.lastSyncEventCount}`);
     console.log(`  Total Synced:     ${state.totalEventsSynced}`);
-    console.log(`  Cached Hashes:    ${state.recentHashes.length}`);
+    console.log(`  Cached Hashes:    ${countSentRecords(state.sentRecords)}`);
   } else {
     console.log(chalk.yellow("  No sync has been performed yet"));
   }

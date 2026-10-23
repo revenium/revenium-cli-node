@@ -1,4 +1,5 @@
-import type { OTLPLogsPayload, HealthCheckResult } from "../types/index.js";
+import type { OTLPLogsPayload, OTLPResponse, HealthCheckResult } from "../types/index.js";
+import { REVENIUM_API_KEY_ATTR } from "../constants.js";
 import { sendOtlpLogs } from "./otlp-client.js";
 
 export interface TestPayloadOptions {
@@ -68,12 +69,12 @@ export function createTestPayload(
   // Parse existing OTEL_RESOURCE_ATTRIBUTES from env
   const envResourceAttrs = process.env.OTEL_RESOURCE_ATTRIBUTES;
   if (envResourceAttrs) {
-    const excludeKeys = new Set(["service.name", "user.email"]);
+    const excludeKeys = new Set(["service.name", "user.email", REVENIUM_API_KEY_ATTR]);
     for (const pair of envResourceAttrs.split(",")) {
       const eqIndex = pair.indexOf("=");
       if (eqIndex === -1) continue;
-      const key = pair.substring(0, eqIndex);
-      if (excludeKeys.has(key)) continue;
+      const key = pair.substring(0, eqIndex).trim();
+      if (!key || excludeKeys.has(key)) continue;
       // Skip if already added via options
       if (resourceAttributes.some((a) => a.key === key)) continue;
       let value = pair.substring(eqIndex + 1);
@@ -112,25 +113,27 @@ export function createTestPayload(
   };
 }
 
-export async function checkEndpointHealth(
+async function sendTestDelivery(
   baseEndpoint: string,
   apiKey: string,
-  serviceName: string,
-  options?: TestPayloadOptions,
+  payload: OTLPLogsPayload,
+  isAccepted: (response: OTLPResponse) => boolean,
 ): Promise<HealthCheckResult> {
   const startTime = Date.now();
 
   try {
-    const sessionId = generateTestSessionId();
-    const payload = createTestPayload(sessionId, serviceName, options);
     const response = await sendOtlpLogs(baseEndpoint, apiKey, payload);
     const latencyMs = Date.now() - startTime;
+    const accepted = isAccepted(response);
 
     return {
-      healthy: true,
+      healthy: accepted,
       statusCode: 200,
-      message: `Endpoint healthy. Processed ${response.processedEvents} event(s).`,
+      message: accepted
+        ? `Endpoint healthy. Processed ${response.processedEvents} event(s).`
+        : `The endpoint returned success but did not accept the usage: ${response.processedEvents} event(s) processed, ${response.failedEvents ?? 0} rejected. Check that the API key is recognized by this endpoint.`,
       latencyMs,
+      processedEvents: response.processedEvents,
     };
   } catch (error) {
     const latencyMs = Date.now() - startTime;
@@ -145,4 +148,31 @@ export async function checkEndpointHealth(
       latencyMs,
     };
   }
+}
+
+export async function checkPayloadDelivery(
+  baseEndpoint: string,
+  apiKey: string,
+  payload: OTLPLogsPayload,
+): Promise<HealthCheckResult> {
+  return sendTestDelivery(
+    baseEndpoint,
+    apiKey,
+    payload,
+    (response) => response.processedEvents > 0 && (response.failedEvents ?? 0) === 0,
+  );
+}
+
+export async function checkEndpointHealth(
+  baseEndpoint: string,
+  apiKey: string,
+  serviceName: string,
+  options?: TestPayloadOptions,
+): Promise<HealthCheckResult> {
+  return sendTestDelivery(
+    baseEndpoint,
+    apiKey,
+    createTestPayload(generateTestSessionId(), serviceName, options),
+    () => true,
+  );
 }

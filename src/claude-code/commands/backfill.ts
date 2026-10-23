@@ -1,6 +1,5 @@
 import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
@@ -8,12 +7,23 @@ import chalk from "chalk";
 import ora from "ora";
 import inquirer from "inquirer";
 import { loadConfig } from "../config/loader.js";
-import { MIDDLEWARE_SOURCE_KEY, MIDDLEWARE_SOURCE_CLI } from "../constants.js";
+import { resolveLogToolDetails } from "../config/claude-settings.js";
+import { getClaudeProjectsDir } from "../config/claude-config-dir.js";
+import { CLAUDE_HOME_DIR_NAME, CLAUDE_PROJECTS_DIR_NAME, ENV_VARS } from "../constants.js";
+import { MIDDLEWARE_SOURCE_BACKFILL, MIDDLEWARE_SOURCE_KEY } from "../../_core/constants.js";
 import { MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE } from "../../_core/api/rate-limiter.js";
 import { sendLogsWithResult } from "../../_core/api/otlp-client.js";
 import { startupStagger } from "../../_core/api/resilience.js";
+import { reportBackfillOutcome } from "../../_core/ui/backfill-outcome.js";
+import type { FailedBatch } from "../../_core/ui/backfill-outcome.js";
+import {
+  printProjectBreakdown,
+  reportUnusableSelectors,
+} from "../../_core/ui/backfill-projects.js";
 import { validateEmail } from "../../_core/config/validator.js";
 import { maskEmail } from "../../_core/utils/masking.js";
+import { projectPathFrom, selectProjects } from "../../_core/utils/project-selection.js";
+import { isInteractive } from "../../_core/ui/interactive.js";
 import type { OTLPLogsPayload } from "../../_core/types/index.js";
 
 export interface BackfillOptions {
@@ -23,6 +33,17 @@ export interface BackfillOptions {
   delay?: number;
   verbose?: boolean;
   email?: string;
+  project?: string;
+  excludeProject?: string;
+}
+
+interface CacheCreationBuckets {
+  ephemeral_1h_input_tokens?: number;
+  ephemeral_5m_input_tokens?: number;
+}
+
+interface ServerToolUse {
+  web_search_requests?: number;
 }
 
 interface UsageData {
@@ -30,18 +51,25 @@ interface UsageData {
   output_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  cache_creation?: CacheCreationBuckets;
+  speed?: string;
+  inference_geo?: string;
+  server_tool_use?: ServerToolUse;
 }
 
 interface ToolUseBlock {
   type: string;
   name?: string;
   input?: Record<string, unknown>;
+  caller?: { type?: string };
 }
 
 interface JsonlEntry {
   type: string;
+  costUSD?: number;
   requestId?: string;
   sessionId?: string;
+  cwd?: string;
   timestamp?: string;
   message?: {
     id?: string;
@@ -56,14 +84,22 @@ export interface ParsedRecord {
   requestId?: string;
   messageId?: string;
   sessionId: string;
+  projectPath: string;
   timestamp: string;
   model: string;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  cacheCreation1hTokens?: number;
+  cacheCreation5mTokens?: number;
+  speed?: string;
+  inferenceGeo?: string;
+  webSearchRequests?: number;
+  costUsd?: number;
   stopReason?: string;
   skillName?: string;
+  skillTrigger?: string;
   toolNames?: string[];
 }
 
@@ -184,7 +220,48 @@ async function findJsonlFiles(
   return { files, errors };
 }
 
-function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
+const REVENIUM_STORED_LABEL_MAX_LENGTH = 16;
+const SKILL_TRIGGER_BY_CALLER_TYPE = new Map<string, string>([["direct", "claude-proactive"]]);
+
+function readNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function readCacheCreationBuckets(cacheCreation: unknown): {
+  oneHour?: number;
+  fiveMinutes?: number;
+} {
+  if (typeof cacheCreation !== "object" || cacheCreation === null) return {};
+
+  const buckets = cacheCreation as CacheCreationBuckets;
+  return {
+    oneHour: readNonNegativeInteger(buckets.ephemeral_1h_input_tokens),
+    fiveMinutes: readNonNegativeInteger(buckets.ephemeral_5m_input_tokens),
+  };
+}
+
+function readWebSearchRequests(serverToolUse: unknown): number | undefined {
+  if (typeof serverToolUse !== "object" || serverToolUse === null) return undefined;
+  return readNonNegativeInteger((serverToolUse as ServerToolUse).web_search_requests);
+}
+
+function readCostUsd(cost: unknown): number | undefined {
+  return typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : undefined;
+}
+
+function normalizeStorableLabel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized.length > REVENIUM_STORED_LABEL_MAX_LENGTH) return undefined;
+  return normalized;
+}
+
+function resolveSkillTrigger(block: ToolUseBlock): string | undefined {
+  const callerType = block.caller?.type;
+  return callerType ? SKILL_TRIGGER_BY_CALLER_TYPE.get(callerType) : undefined;
+}
+
+export function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
   if (!line.trim()) return {};
 
   let entry: JsonlEntry;
@@ -215,9 +292,12 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
 
   if (totalTokens === 0) return {};
 
+  const cacheCreation = readCacheCreationBuckets(usage.cache_creation);
+
   const content = entry.message.content;
   const toolNames: string[] = [];
   let skillName: string | undefined;
+  let skillTrigger: string | undefined;
 
   if (Array.isArray(content)) {
     for (const block of content) {
@@ -226,6 +306,7 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
       toolNames.push(block.name);
       if (block.name === "Skill" && typeof block.input?.skill === "string") {
         skillName = block.input.skill;
+        skillTrigger = resolveSkillTrigger(block);
       }
     }
   }
@@ -235,14 +316,22 @@ function parseJsonlLine(line: string, sinceDate: Date | null): StreamResult {
       requestId,
       messageId,
       sessionId,
+      projectPath: projectPathFrom(entry.cwd),
       timestamp,
       model,
       inputTokens: usage.input_tokens || 0,
       outputTokens: usage.output_tokens || 0,
       cacheReadTokens: usage.cache_read_input_tokens || 0,
       cacheCreationTokens: usage.cache_creation_input_tokens || 0,
+      cacheCreation1hTokens: cacheCreation.oneHour,
+      cacheCreation5mTokens: cacheCreation.fiveMinutes,
+      speed: normalizeStorableLabel(usage.speed),
+      inferenceGeo: normalizeStorableLabel(usage.inference_geo),
+      webSearchRequests: readWebSearchRequests(usage.server_tool_use),
+      costUsd: readCostUsd(entry.costUSD),
       stopReason: entry.message.stop_reason,
       skillName,
+      skillTrigger,
       toolNames: toolNames.length > 0 ? toolNames : undefined,
     },
   };
@@ -281,9 +370,11 @@ export function createOtlpPayload(
     email?: string;
     organizationName?: string;
     productName?: string;
+    logToolDetails?: boolean;
   },
 ): OTLPLogsPayload {
-  const { email, organizationName, productName } = options;
+  const { email, organizationName, productName, logToolDetails } = options;
+  const skillNamesAllowed = logToolDetails !== false;
 
   const logRecords = records
     .map((record) => {
@@ -312,6 +403,34 @@ export function createOtlpPayload(
         },
       ];
 
+      if (record.cacheCreation1hTokens !== undefined) {
+        attributes.push({
+          key: "cache_creation_1h_tokens",
+          value: { stringValue: String(record.cacheCreation1hTokens) },
+        });
+      }
+      if (record.cacheCreation5mTokens !== undefined) {
+        attributes.push({
+          key: "cache_creation_5m_tokens",
+          value: { stringValue: String(record.cacheCreation5mTokens) },
+        });
+      }
+      if (record.speed !== undefined) {
+        attributes.push({ key: "speed", value: { stringValue: record.speed } });
+      }
+      if (record.inferenceGeo !== undefined) {
+        attributes.push({ key: "inference_geo", value: { stringValue: record.inferenceGeo } });
+      }
+      if ((record.webSearchRequests ?? 0) > 0) {
+        attributes.push({
+          key: "web_search_requests",
+          value: { stringValue: String(record.webSearchRequests) },
+        });
+      }
+      if (record.costUsd !== undefined) {
+        attributes.push({ key: "cost_usd", value: { stringValue: record.costUsd.toFixed(6) } });
+      }
+
       if (record.requestId) {
         attributes.push({ key: "request_id", value: { stringValue: record.requestId } });
       }
@@ -326,7 +445,7 @@ export function createOtlpPayload(
       if (record.stopReason) {
         attributes.push({ key: "stop_reason", value: { stringValue: record.stopReason } });
       }
-      if (record.skillName) {
+      if (record.skillName && skillNamesAllowed) {
         attributes.push({ key: "skill.name", value: { stringValue: record.skillName } });
       }
       if (record.toolNames) {
@@ -348,7 +467,7 @@ export function createOtlpPayload(
   }> = [];
 
   for (const record of records) {
-    if (!record.skillName) continue;
+    if (!record.skillName || !skillNamesAllowed) continue;
     const timeUnixNano = toUnixNano(record.timestamp);
     if (!timeUnixNano) continue;
 
@@ -361,8 +480,9 @@ export function createOtlpPayload(
       attributes: [
         { key: "session.id", value: { stringValue: record.sessionId } },
         { key: "skill.name", value: { stringValue: record.skillName } },
-        { key: "invocation_trigger", value: { stringValue: "user-slash" } },
-        { key: "skill.source", value: { stringValue: "userSettings" } },
+        ...(record.skillTrigger
+          ? [{ key: "invocation_trigger", value: { stringValue: record.skillTrigger } }]
+          : []),
         { key: "event.sequence", value: { stringValue: String(activationSeq) } },
       ],
     });
@@ -383,7 +503,7 @@ export function createOtlpPayload(
 
   const resourceAttributes: Array<{ key: string; value: { stringValue: string } }> = [
     { key: "service.name", value: { stringValue: "claude-code" } },
-    { key: MIDDLEWARE_SOURCE_KEY, value: { stringValue: MIDDLEWARE_SOURCE_CLI } },
+    { key: MIDDLEWARE_SOURCE_KEY, value: { stringValue: MIDDLEWARE_SOURCE_BACKFILL } },
   ];
 
   if (organizationName) {
@@ -427,7 +547,7 @@ export async function resolveBackfillEmail(
     return configEmail;
   }
 
-  if (!process.stdin.isTTY) {
+  if (!isInteractive()) {
     console.log(
       chalk.yellow(
         "No email configured and no --email provided; backfilled usage will be unattributed.",
@@ -503,7 +623,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
     console.log(chalk.dim(`Filtering records since: ${sinceDate.toISOString()}\n`));
   }
 
-  const projectsDir = join(homedir(), ".claude", "projects");
+  const projectsDir = getClaudeProjectsDir();
   const discoverSpinner = ora("Discovering JSONL files...").start();
 
   const { files: jsonlFiles, errors: discoveryErrors } = await findJsonlFiles(projectsDir);
@@ -511,6 +631,11 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   if (jsonlFiles.length === 0) {
     discoverSpinner.fail("No JSONL files found");
     console.log(chalk.dim(`Searched in: ${projectsDir}`));
+    console.log(
+      chalk.dim(
+        `This folder is $${ENV_VARS.CLAUDE_CONFIG_DIR}/${CLAUDE_PROJECTS_DIR_NAME}, or ~/${CLAUDE_HOME_DIR_NAME}/${CLAUDE_PROJECTS_DIR_NAME} when ${ENV_VARS.CLAUDE_CONFIG_DIR} is unset`,
+      ),
+    );
     process.exit(1);
   } else {
     discoverSpinner.succeed(`Found ${jsonlFiles.length} JSONL file(s)`);
@@ -560,12 +685,24 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
 
   processSpinner.succeed(statusMessage);
 
+  const { records: dedupedRecords, duplicateCount } = deduplicateRecords(allRecords);
+
+  const selection = selectProjects(dedupedRecords, (record) => record.projectPath, options);
+  printProjectBreakdown(selection.breakdown, "record");
+  if (reportUnusableSelectors(selection)) {
+    process.exit(1);
+  }
+
   if (allRecords.length === 0) {
     console.log(chalk.yellow("\nNo usage records found to backfill."));
     return;
   }
 
-  const { records: backfillRecords, duplicateCount } = deduplicateRecords(allRecords);
+  const backfillRecords = selection.included;
+  if (backfillRecords.length === 0) {
+    console.log(chalk.yellow("\nEvery project was excluded; no usage records to backfill."));
+    return;
+  }
 
   const sorted = [...backfillRecords].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
@@ -589,6 +726,17 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   console.log(`  Cache read tokens:    ${totalCacheRead.toLocaleString()}`);
   console.log(`  Cache creation:       ${totalCacheCreation.toLocaleString()}`);
 
+  const logToolDetails = await resolveLogToolDetails(config);
+  if (logToolDetails.unreadablePath) {
+    console.log(
+      chalk.yellow(
+        `\nWithholding skill names from the import: could not read ${logToolDetails.unreadablePath}`,
+      ),
+    );
+  } else if (logToolDetails.value === false) {
+    console.log(chalk.dim("\nWithholding skill names from the import (OTEL_LOG_TOOL_DETAILS=0)"));
+  }
+
   if (dryRun) {
     console.log("\n" + chalk.yellow("Dry run complete. Use without --dry-run to send data."));
     return;
@@ -610,8 +758,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
   await startupStagger();
   let sentBatches = 0;
   let sentRecords = 0;
-  let permanentlyFailedBatches = 0;
-  const failedBatchDetails: Array<{ batchNumber: number; error: string }> = [];
+  const failedBatches: FailedBatch[] = [];
   for (let i = 0; i < backfillRecords.length; i += batchSize) {
     const batchNumber = Math.floor(i / batchSize) + 1;
     const batch = backfillRecords.slice(i, i + batchSize);
@@ -619,6 +766,7 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
       email,
       organizationName: config.organizationName,
       productName: config.productName,
+      logToolDetails: logToolDetails.value,
     });
 
     sendSpinner.text = `Sending batch ${batchNumber}/${totalBatches}...`;
@@ -633,27 +781,15 @@ export async function backfillCommand(options: BackfillOptions = {}): Promise<vo
       sentRecords += batch.length;
       sendSpinner.text = `Sending data... (${sentBatches}/${totalBatches} batches)`;
     } else {
-      permanentlyFailedBatches++;
-      failedBatchDetails.push({
+      failedBatches.push({
         batchNumber,
         error: result.error || "Unknown error",
       });
     }
   }
 
-  if (permanentlyFailedBatches === 0) {
-    sendSpinner.succeed(`Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches`);
-  } else {
-    sendSpinner.warn(
-      `Sent ${sentRecords.toLocaleString()} records in ${sentBatches} batches (${permanentlyFailedBatches} failed)`,
-    );
-
-    console.log("\n" + chalk.red.bold("Failed Batches:"));
-    for (const failed of failedBatchDetails) {
-      console.log(chalk.red(`  Batch ${failed.batchNumber}: ${failed.error}`));
-    }
+  const complete = reportBackfillOutcome(sendSpinner, { sentRecords, sentBatches, failedBatches });
+  if (!complete) {
+    process.exitCode = 1;
   }
-
-  console.log("\n" + chalk.green.bold("Backfill complete!"));
-  console.log(chalk.dim("Check your Revenium dashboard to see the imported data."));
 }

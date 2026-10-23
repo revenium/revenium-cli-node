@@ -3,18 +3,29 @@ import chalk from "chalk";
 import ora from "ora";
 import { DEFAULT_REVENIUM_URL } from "../../_core/constants.js";
 import { maskApiKey, maskEmail } from "../../_core/utils/masking.js";
-import { validateApiKey, validateEmail } from "../../_core/config/validator.js";
+import {
+  validateApiKey,
+  validateEmail,
+  validateEndpointUrl,
+  validateOrganizationName,
+  validateProductName,
+} from "../../_core/config/validator.js";
+import { enforceSetupFlags, enforceSetupInputs } from "../../_core/config/setup-input-gate.js";
+import { firstNonEmpty } from "../../_core/utils/optional-text.js";
+import { extractBaseEndpoint } from "../../_core/config/loader.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { updateShellProfile, getManualInstructions } from "../../_core/shell/profile-updater.js";
 import { detectShell, validateConfigPath } from "../../_core/shell/detector.js";
 import { writeConfig } from "../config/writer.js";
-import { getConfigPath } from "../config/loader.js";
+import { getConfigPath, findUnknownConfigKeys } from "../config/loader.js";
+import { printUnknownConfigKeys } from "../../_core/ui/unknown-config-keys.js";
+import { isInteractive, requireOptions } from "../../_core/ui/interactive.js";
+import { parseSubscriptionTier } from "../../_core/config/subscription-tier.js";
 import {
   DEFAULT_SYNC_INTERVAL_MS,
   SERVICE_NAME,
   SUBSCRIPTION_TIER_CONFIG,
   SUBSCRIPTION_TIERS,
-  type SubscriptionTier,
 } from "../constants.js";
 import type { CopilotConfig } from "../types.js";
 import type { ShellType } from "../../_core/types/index.js";
@@ -49,6 +60,8 @@ function getConfigFilePath(): string {
 export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   console.log(chalk.bold("\nRevenium GitHub Copilot Metering Setup\n"));
   console.log(chalk.dim("This wizard configures the Revenium credentials the CLI needs.\n"));
+
+  printUnknownConfigKeys(getConfigPath(), await findUnknownConfigKeys());
 
   const config = await collectConfiguration(options);
 
@@ -127,21 +140,48 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 }
 
 async function collectConfiguration(options: SetupOptions): Promise<CopilotConfig> {
-  const nonInteractive = !!(options.reveniumApiKey && options.endpoint && options.subscriptionTier);
+  const interactive = isInteractive();
+
+  if (!interactive) {
+    requireOptions([
+      { flag: "--api-key", value: options.reveniumApiKey },
+      {
+        flag: "--subscription-tier",
+        value: options.subscriptionTier,
+        allowedValues: SUBSCRIPTION_TIERS,
+      },
+    ]);
+  }
+
+  enforceSetupFlags({
+    apiKey: options.reveniumApiKey,
+    email: options.email,
+    endpoint: options.endpoint,
+    organizationName: options.organizationName,
+    productName: options.productName,
+  });
+
+  const allRequiredProvided = [
+    options.reveniumApiKey,
+    options.endpoint,
+    options.subscriptionTier,
+  ].every((value) => value !== undefined);
+
+  const skipPrompts = !interactive || allRequiredProvided;
 
   const tierChoices = SUBSCRIPTION_TIERS.map((tier) => ({
     name: SUBSCRIPTION_TIER_CONFIG[tier].name,
     value: tier,
   }));
 
-  const answers: Record<string, string> = nonInteractive
+  const answers: Record<string, string> = skipPrompts
     ? {}
     : await inquirer.prompt([
         {
           type: "password",
           name: "reveniumApiKey",
-          message: "Enter your Revenium API key (hak_... or rev_...):",
-          when: !options.reveniumApiKey,
+          message: "Enter your Revenium metering key rev_mk_... (recommended):",
+          when: options.reveniumApiKey === undefined,
           validate: (input: string) => {
             const result = validateApiKey(input);
             return result.valid || result.errors.join(", ");
@@ -153,16 +193,16 @@ async function collectConfiguration(options: SetupOptions): Promise<CopilotConfi
           name: "subscriptionTier",
           message: "GitHub Copilot subscription tier:",
           choices: tierChoices,
-          when: !options.subscriptionTier,
+          when: options.subscriptionTier === undefined,
         },
         {
           type: "input",
           name: "email",
-          message: "Admin email (for attribution, optional):",
-          when: !options.email,
+          message: "Admin contact email (optional, not used for attribution):",
+          when: options.email === undefined,
           validate: (input: string) => {
             if (!input) return true;
-            const result = validateEmail(input);
+            const result = validateEmail(input.trim());
             return result.valid || result.errors.join(", ");
           },
         },
@@ -170,26 +210,20 @@ async function collectConfiguration(options: SetupOptions): Promise<CopilotConfi
           type: "input",
           name: "organizationName",
           message: "Organization name (for cost attribution, optional):",
-          when: !options.organizationName,
+          when: options.organizationName === undefined,
           validate: (input: string) => {
-            if (!input) return true;
-            if (input.trim().length > 255) {
-              return "Organization name is too long (max 255 characters)";
-            }
-            return true;
+            const result = validateOrganizationName(input.trim());
+            return result.valid || result.errors.join(", ");
           },
         },
         {
           type: "input",
           name: "productName",
           message: "Product name (for cost attribution, optional):",
-          when: !options.productName,
+          when: options.productName === undefined,
           validate: (input: string) => {
-            if (!input) return true;
-            if (input.trim().length > 255) {
-              return "Product name is too long (max 255 characters)";
-            }
-            return true;
+            const result = validateProductName(input.trim());
+            return result.valid || result.errors.join(", ");
           },
         },
         {
@@ -197,49 +231,44 @@ async function collectConfiguration(options: SetupOptions): Promise<CopilotConfi
           name: "endpoint",
           message: "Revenium API endpoint:",
           default: DEFAULT_REVENIUM_URL,
-          when: !options.endpoint,
+          when: options.endpoint === undefined,
           validate: (input: string) => {
-            try {
-              new URL(input);
-              return true;
-            } catch {
-              return "Please enter a valid URL";
-            }
+            const result = validateEndpointUrl(input);
+            return result.valid || result.errors.join(", ");
           },
         },
       ]);
 
   const rawEndpoint = options.endpoint || answers.endpoint || DEFAULT_REVENIUM_URL;
-  let endpoint = rawEndpoint.replace(/\/+$/, "");
-
-  try {
-    const url = new URL(endpoint);
-    if (url.pathname.includes("/meter")) {
-      url.pathname = url.pathname.split("/meter")[0];
-      endpoint = url.origin + url.pathname;
-    }
-  } catch {
-    // use as-is
-  }
-
-  endpoint = endpoint.replace(/\/+$/, "");
+  const endpoint = extractBaseEndpoint(rawEndpoint);
 
   const syncIntervalMs =
     options.syncInterval !== undefined ? options.syncInterval : DEFAULT_SYNC_INTERVAL_MS;
 
-  const rawTier = options.subscriptionTier || answers.subscriptionTier;
-  const subscriptionTier =
-    rawTier && SUBSCRIPTION_TIERS.includes(rawTier as SubscriptionTier)
-      ? (rawTier as SubscriptionTier)
-      : undefined;
+  const subscriptionTier = parseSubscriptionTier(
+    options.subscriptionTier || answers.subscriptionTier,
+    SUBSCRIPTION_TIERS,
+  );
+
+  const reveniumApiKey = options.reveniumApiKey ?? answers.reveniumApiKey;
+  const email = firstNonEmpty(options.email, answers.email);
+  const organizationName = firstNonEmpty(options.organizationName, answers.organizationName);
+  const productName = firstNonEmpty(options.productName, answers.productName);
+
+  enforceSetupInputs({
+    apiKey: reveniumApiKey,
+    email,
+    endpoint: rawEndpoint,
+    organizationName,
+    productName,
+  });
 
   return {
-    reveniumApiKey: options.reveniumApiKey || answers.reveniumApiKey,
+    reveniumApiKey,
     reveniumEndpoint: endpoint,
-    email: options.email || answers.email?.trim() || undefined,
-    organizationName:
-      options.organizationName?.trim() || answers.organizationName?.trim() || undefined,
-    productName: options.productName?.trim() || answers.productName?.trim() || undefined,
+    email,
+    organizationName,
+    productName,
     syncIntervalMs,
     subscriptionTier,
   };

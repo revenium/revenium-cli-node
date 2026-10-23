@@ -1,5 +1,6 @@
 import type { CursorConfig, CursorUsageEvent, SyncState } from "../../src/cursor/types.js";
 import type {
+  BillingUsageItem,
   CopilotConfig,
   CopilotUsageDay,
   CopilotUsageBreakdown,
@@ -38,7 +39,7 @@ export function createSyncState(overrides: Partial<SyncState> = {}): SyncState {
     lastSyncTimestamp: 0,
     lastSyncEventCount: 0,
     totalEventsSynced: 0,
-    recentHashes: [],
+    sentRecords: {},
     ...overrides,
   };
 }
@@ -66,7 +67,26 @@ export function createCopilotBreakdown(
     lines_suggested: 300,
     lines_accepted: 180,
     active_users: 5,
+    input_tokens: 0,
+    output_tokens: 0,
+    ai_credits: 0,
     ...overrides,
+  };
+}
+
+export function createBillingUsageItem(model: string, grossAmount: number): BillingUsageItem {
+  return {
+    product: "copilot",
+    sku: "copilot_premium_request",
+    model,
+    unitType: "request",
+    pricePerUnit: 0.04,
+    grossQuantity: 1,
+    grossAmount,
+    discountQuantity: 0,
+    discountAmount: 0,
+    netQuantity: 1,
+    netAmount: grossAmount,
   };
 }
 
@@ -93,7 +113,7 @@ export function createCopilotSyncState(
     lastSyncTimestamp: 0,
     lastSyncEventCount: 0,
     totalEventsSynced: 0,
-    recentHashes: [],
+    sentRecords: {},
     ...overrides,
   };
 }

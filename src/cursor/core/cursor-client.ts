@@ -4,20 +4,53 @@ import {
   jitteredBackoff,
   getMaxRetries,
   getRequestTimeoutMs,
-  getBackoffMaxMs,
   parsePositiveInt,
   sleep,
   isRetryableStatusCode,
   isNonRetryable4xx,
-  isRetryableNetworkError,
-  parseRetryAfterMs,
+  retryDelayMs,
   sanitizeErrorMessage,
 } from "../../_core/api/resilience.js";
+import {
+  describeTransportFailure,
+  isRetryableTransportError,
+} from "../../_core/api/network-error.js";
 
 export const DEFAULT_CURSOR_MIN_REQUEST_INTERVAL_MS = 7_500;
 
+export const CURSOR_MAX_PAGE_SIZE = 1_000;
+
+const CONNECTIVITY_PROBE_PAGE_SIZE = 100;
+const INTEGER_PATTERN = /^\d+$/;
+
 export function getCursorMinRequestIntervalMs(): number {
   return parsePositiveInt("CURSOR_MIN_REQUEST_INTERVAL_MS", DEFAULT_CURSOR_MIN_REQUEST_INTERVAL_MS);
+}
+
+export function getCursorPageSize(): number {
+  const raw = process.env.CURSOR_PAGE_SIZE;
+  if (raw === undefined || raw === "") return CURSOR_MAX_PAGE_SIZE;
+
+  const trimmed = raw.trim();
+  const parsed = INTEGER_PATTERN.test(trimmed) ? Number(trimmed) : NaN;
+
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    console.warn(
+      `[cursor] CURSOR_PAGE_SIZE="${raw}" is not a positive whole number of events; using ${CURSOR_MAX_PAGE_SIZE}`,
+    );
+    return CURSOR_MAX_PAGE_SIZE;
+  }
+
+  return Math.min(parsed, CURSOR_MAX_PAGE_SIZE);
+}
+
+export class CursorWindowTruncatedError extends Error {
+  constructor(readonly truncatedWindows: number) {
+    super(
+      `Cursor returned an empty page while reporting more pages in ${truncatedWindows} time window(s); those windows were read only in part, so events older than the ones already read were not fetched. Re-run this range to pick them up.`,
+    );
+    this.name = "CursorWindowTruncatedError";
+  }
 }
 
 export interface FetchPacer {
@@ -66,14 +99,13 @@ async function cursorRequest<T>(
   const url = `${CURSOR_API_BASE_URL}${path}`;
   const maxRetries = getMaxRetries();
   const timeoutMs = getRequestTimeoutMs();
-  const backoffMaxMs = getBackoffMaxMs();
   let lastError: Error | null = null;
 
-  if (pacer) {
-    await pace(pacer);
-  }
-
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (pacer) {
+      await pace(pacer);
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -105,12 +137,7 @@ async function cursorRequest<T>(
       lastError = new Error(errorMsg);
 
       if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
-        const backoff = jitteredBackoff(attempt);
-        const retryAfterMs = parseRetryAfterMs(response);
-        const cappedRetryAfter =
-          retryAfterMs !== null ? Math.min(retryAfterMs, backoffMaxMs) : null;
-        const delay = cappedRetryAfter !== null ? Math.max(cappedRetryAfter, backoff) : backoff;
-        await sleep(delay);
+        await sleep(retryDelayMs(response, attempt));
         continue;
       }
 
@@ -123,13 +150,11 @@ async function cursorRequest<T>(
       }
 
       if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          lastError = new Error(`Cursor API request timeout after ${timeoutMs}ms`);
-        } else if (lastError?.message !== error.message) {
-          lastError = new Error(sanitizeErrorMessage(error.message, apiKey));
+        if (error !== lastError) {
+          lastError = new Error(describeTransportFailure(error, apiKey, timeoutMs, "Cursor API"));
         }
 
-        if (isRetryableNetworkError(lastError) && attempt < maxRetries - 1) {
+        if (isRetryableTransportError(error) && attempt < maxRetries - 1) {
           await sleep(jitteredBackoff(attempt));
           continue;
         }
@@ -143,37 +168,44 @@ async function cursorRequest<T>(
   throw lastError || new Error("Cursor API request failed after retries");
 }
 
-function parseTimestamps(events: CursorUsageEvent[]): CursorUsageEvent[] {
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeNumericFields(events: CursorUsageEvent[]): CursorUsageEvent[] {
   return events.map((event) => ({
     ...event,
-    timestamp:
-      typeof event.timestamp === "string"
-        ? Number(event.timestamp as unknown as string)
-        : event.timestamp,
+    timestamp: toFiniteNumber(event.timestamp) ?? NaN,
+    chargedCents: toFiniteNumber(event.chargedCents),
   }));
+}
+
+interface PageRequest {
+  from: number;
+  to: number;
+  pageSize: number;
+  page: number;
 }
 
 async function fetchPage(
   apiKey: string,
-  from: number,
-  to: number,
-  page?: number,
+  request: PageRequest,
   pacer?: FetchPacer,
 ): Promise<CursorPaginatedResponse> {
-  const body: Record<string, unknown> = {
-    startDate: from,
-    endDate: to,
-    pageSize: 100,
-  };
-
-  if (page !== undefined) {
-    body.page = page;
-  }
-
   return cursorRequest<CursorPaginatedResponse>(
     "/teams/filtered-usage-events",
     apiKey,
-    body,
+    {
+      startDate: request.from,
+      endDate: request.to,
+      pageSize: request.pageSize,
+      page: request.page,
+    },
     pacer,
   );
 }
@@ -189,8 +221,10 @@ export async function* fetchEvents(
   options: FetchEventsOptions = {},
 ): AsyncGenerator<CursorUsageEvent[]> {
   const pacer = createFetchPacer(options.minRequestIntervalMs);
+  const pageSize = getCursorPageSize();
   const msPerChunk = MAX_DAYS_PER_REQUEST * 24 * 60 * 60 * 1000;
   let chunkStart = from;
+  let truncatedWindows = 0;
 
   while (chunkStart < to) {
     const chunkEnd = Math.min(chunkStart + msPerChunk, to);
@@ -198,18 +232,33 @@ export async function* fetchEvents(
     let hasNextPage = true;
 
     while (hasNextPage) {
-      const response = await fetchPage(apiKey, chunkStart, chunkEnd, page, pacer);
-      const events = parseTimestamps(response.usageEvents);
+      const response = await fetchPage(
+        apiKey,
+        { from: chunkStart, to: chunkEnd, pageSize, page },
+        pacer,
+      );
+      const events = normalizeNumericFields(response.usageEvents);
 
       if (events.length > 0) {
         yield events;
       }
 
-      hasNextPage = response.pagination.hasNextPage;
+      if (response.pagination.hasNextPage && events.length === 0) {
+        truncatedWindows++;
+        console.warn(
+          `[cursor] Cursor returned an empty page ${page} of ${response.pagination.numPages} while reporting more pages; stopping this window early, events older than the ones already read may be missing`,
+        );
+      }
+
+      hasNextPage = response.pagination.hasNextPage && events.length > 0;
       page++;
     }
 
     chunkStart = chunkEnd;
+  }
+
+  if (truncatedWindows > 0) {
+    throw new CursorWindowTruncatedError(truncatedWindows);
   }
 }
 
@@ -218,7 +267,12 @@ export async function testConnectivity(apiKey: string): Promise<boolean> {
   const oneHourAgo = now - 60 * 60 * 1000;
 
   try {
-    await fetchPage(apiKey, oneHourAgo, now, 1);
+    await fetchPage(apiKey, {
+      from: oneHourAgo,
+      to: now,
+      pageSize: CONNECTIVITY_PROBE_PAGE_SIZE,
+      page: 1,
+    });
     return true;
   } catch {
     return false;

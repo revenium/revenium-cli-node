@@ -9,7 +9,11 @@ import {
   DEFAULT_SYNC_INTERVAL_MS,
 } from "../constants.js";
 import { REVENIUM_ENV_FILE, DEFAULT_REVENIUM_URL } from "../../_core/constants.js";
-import { parseEnvContent } from "../../_core/config/loader.js";
+import {
+  parseEnvContent,
+  extractBaseEndpoint,
+  readUnknownKeys,
+} from "../../_core/config/loader.js";
 import type { CopilotConfig } from "../types.js";
 
 export function getConfigDir(): string {
@@ -22,6 +26,10 @@ export function getConfigPath(): string {
 
 export function configExists(): boolean {
   return existsSync(getConfigPath());
+}
+
+export function findUnknownConfigKeys(): Promise<string[]> {
+  return readUnknownKeys(getConfigPath(), Object.values(ENV_KEYS));
 }
 
 export async function loadConfig(): Promise<CopilotConfig | null> {
@@ -54,7 +62,9 @@ export async function loadConfig(): Promise<CopilotConfig | null> {
       githubToken: process.env[ENV_KEYS.GITHUB_TOKEN] || env[ENV_KEYS.GITHUB_TOKEN] || undefined,
       githubOrg: process.env[ENV_KEYS.GITHUB_ORG] || env[ENV_KEYS.GITHUB_ORG] || undefined,
       reveniumApiKey,
-      reveniumEndpoint: env[ENV_KEYS.REVENIUM_ENDPOINT] || DEFAULT_REVENIUM_URL,
+      reveniumEndpoint: extractBaseEndpoint(
+        env[ENV_KEYS.REVENIUM_ENDPOINT] || DEFAULT_REVENIUM_URL,
+      ),
       email: env[ENV_KEYS.SUBSCRIBER_EMAIL] || undefined,
       organizationName: env[ENV_KEYS.ORGANIZATION_NAME] || undefined,
       productName: env[ENV_KEYS.PRODUCT_NAME] || undefined,
