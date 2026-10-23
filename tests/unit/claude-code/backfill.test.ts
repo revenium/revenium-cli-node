@@ -5,10 +5,12 @@ import {
   resolveBackfillEmail,
   type ParsedRecord,
 } from "../../../src/claude-code/commands/backfill.js";
+import { stubTty, restoreTty } from "../../helpers/tty.js";
 
 function makeRecord(overrides: Partial<ParsedRecord> = {}): ParsedRecord {
   return {
     sessionId: "session-abc",
+    projectPath: "/Users/dev/acme",
     timestamp: "2024-06-01T12:00:00.000Z",
     model: "claude-3-5-sonnet-20241022",
     inputTokens: 100,
@@ -27,11 +29,11 @@ describe("createOtlpPayload — resource attributes", () => {
     expect(serviceName?.value.stringValue).toBe("claude-code");
   });
 
-  it("stamps revenium.middleware.source=revenium-cli in resource attributes", () => {
+  it("stamps revenium.middleware.source=revenium-cli-backfill in resource attributes", () => {
     const payload = createOtlpPayload([makeRecord()], {});
     const attrs = payload.resourceLogs[0].resource?.attributes ?? [];
     const marker = attrs.find((a) => a.key === "revenium.middleware.source");
-    expect(marker?.value.stringValue).toBe("revenium-cli");
+    expect(marker?.value.stringValue).toBe("revenium-cli-backfill");
   });
 
   it("does NOT include cost_multiplier in resource attributes", () => {
@@ -46,6 +48,13 @@ describe("createOtlpPayload — resource attributes", () => {
     const attrs = payload.resourceLogs[0].resource?.attributes ?? [];
     const orgAttr = attrs.find((a) => a.key === "organization.name");
     expect(orgAttr?.value.stringValue).toBe("Acme Corp");
+  });
+
+  it("sends a punctuated organization.name verbatim, as a live session reports it", () => {
+    const payload = createOtlpPayload([makeRecord()], { organizationName: "Acme, Inc." });
+    const attrs = payload.resourceLogs[0].resource?.attributes ?? [];
+    const orgAttr = attrs.find((a) => a.key === "organization.name");
+    expect(orgAttr?.value.stringValue).toBe("Acme, Inc.");
   });
 
   it("does NOT include organization.name in resource attributes when not provided", () => {
@@ -143,6 +152,101 @@ describe("createOtlpPayload — log record attributes", () => {
     expect(logAttrs.find((a) => a.key === "output_tokens")?.value.stringValue).toBe("75");
     expect(logAttrs.find((a) => a.key === "cache_read_tokens")?.value.stringValue).toBe("15");
     expect(logAttrs.find((a) => a.key === "cache_creation_tokens")?.value.stringValue).toBe("8");
+  });
+
+  it("reports the cache-write TTL split alongside the flat total", () => {
+    const record = makeRecord({
+      cacheCreationTokens: 1000,
+      cacheCreation1hTokens: 200,
+      cacheCreation5mTokens: 800,
+    });
+    const payload = createOtlpPayload([record], {});
+    const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+
+    expect(logAttrs.find((a) => a.key === "cache_creation_1h_tokens")?.value.stringValue).toBe(
+      "200",
+    );
+    expect(logAttrs.find((a) => a.key === "cache_creation_5m_tokens")?.value.stringValue).toBe(
+      "800",
+    );
+    expect(logAttrs.find((a) => a.key === "cache_creation_tokens")?.value.stringValue).toBe("1000");
+  });
+
+  it("reports a zero bucket instead of omitting it when every write used one TTL", () => {
+    const record = makeRecord({
+      cacheCreationTokens: 1000,
+      cacheCreation1hTokens: 1000,
+      cacheCreation5mTokens: 0,
+    });
+    const payload = createOtlpPayload([record], {});
+    const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+
+    expect(logAttrs.find((a) => a.key === "cache_creation_5m_tokens")?.value.stringValue).toBe("0");
+    expect(logAttrs.find((a) => a.key === "cache_creation_1h_tokens")?.value.stringValue).toBe(
+      "1000",
+    );
+  });
+
+  it("reports speed when the session line carries it", () => {
+    const payload = createOtlpPayload([makeRecord({ speed: "fast" })], {});
+    const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+
+    expect(logAttrs.find((a) => a.key === "speed")?.value.stringValue).toBe("fast");
+  });
+
+  it("reports the inference region and the call's own cost", () => {
+    const payload = createOtlpPayload([makeRecord({ inferenceGeo: "us", costUsd: 0.1234567 })], {});
+    const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+
+    expect(logAttrs.find((a) => a.key === "inference_geo")?.value.stringValue).toBe("us");
+    expect(logAttrs.find((a) => a.key === "cost_usd")?.value.stringValue).toBe("0.123457");
+  });
+
+  it("reports the web-search count only when the call ran a search", () => {
+    const withSearches = createOtlpPayload([makeRecord({ webSearchRequests: 3 })], {});
+    const withoutSearches = createOtlpPayload([makeRecord({ webSearchRequests: 0 })], {});
+
+    expect(
+      withSearches.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find(
+        (a) => a.key === "web_search_requests",
+      )?.value.stringValue,
+    ).toBe("3");
+    expect(
+      withoutSearches.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.some(
+        (a) => a.key === "web_search_requests",
+      ),
+    ).toBe(false);
+  });
+
+  it("emits the same attribute keys as before for a session line without the split or speed", () => {
+    const payload = createOtlpPayload([makeRecord()], {});
+    const logAttrs = payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
+
+    expect(logAttrs.map((a) => a.key)).toEqual([
+      "transaction_id",
+      "session.id",
+      "model",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_creation_tokens",
+    ]);
+  });
+
+  it("keeps transaction_id stable across the version boundary", () => {
+    const withoutSplit = makeRecord();
+    const withSplit = makeRecord({
+      cacheCreation1hTokens: 3,
+      cacheCreation5mTokens: 2,
+      speed: "fast",
+    });
+
+    const idOf = (record: ParsedRecord) =>
+      createOtlpPayload([record], {}).resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find(
+        (a) => a.key === "transaction_id",
+      )?.value.stringValue;
+
+    expect(idOf(withSplit)).toBe(idOf(withoutSplit));
   });
 });
 
@@ -255,12 +359,20 @@ describe("resolveBackfillEmail — precedence (non-interactive branches)", () =>
   });
 
   it("returns undefined (unattributed) when no TTY and no email is available", async () => {
-    const orig = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+    stubTty(false);
     try {
       expect(await resolveBackfillEmail(undefined, undefined)).toBeUndefined();
     } finally {
-      if (orig) Object.defineProperty(process.stdin, "isTTY", orig);
+      restoreTty();
+    }
+  });
+
+  it("returns undefined without prompting when stdout is piped and stdin is a terminal", async () => {
+    stubTty(true, false);
+    try {
+      expect(await resolveBackfillEmail(undefined, undefined)).toBeUndefined();
+    } finally {
+      restoreTty();
     }
   });
 
@@ -308,8 +420,8 @@ describe("createOtlpPayload — skill and tool attributes", () => {
     expect(activations).toHaveLength(1);
     const attrs = activations[0].attributes;
     expect(findAttr(attrs, "skill.name")?.value.stringValue).toBe("commit");
-    expect(findAttr(attrs, "invocation_trigger")?.value.stringValue).toBe("user-slash");
-    expect(findAttr(attrs, "skill.source")?.value.stringValue).toBe("userSettings");
+    expect(findAttr(attrs, "invocation_trigger")).toBeUndefined();
+    expect(findAttr(attrs, "skill.source")).toBeUndefined();
     expect(findAttr(attrs, "event.sequence")).toBeDefined();
   });
 
@@ -343,5 +455,73 @@ describe("createOtlpPayload — skill and tool attributes", () => {
     const payload = createOtlpPayload([makeRecord()], {});
     const attrs = getLogAttrs(payload);
     expect(findAttr(attrs, "tool_count")).toBeUndefined();
+  });
+
+  describe("tool-details opt-out", () => {
+    const skillName = "acme-internal:merger-due-diligence";
+
+    function apiRecords(payload: ReturnType<typeof createOtlpPayload>) {
+      return payload.resourceLogs[0].scopeLogs[0].logRecords.filter(
+        (r) => r.body.stringValue === "claude_code.api_request",
+      );
+    }
+
+    function activations(payload: ReturnType<typeof createOtlpPayload>) {
+      return payload.resourceLogs[0].scopeLogs[0].logRecords.filter(
+        (r) => r.body.stringValue === "claude_code.skill_activated",
+      );
+    }
+
+    it("withholds skill.name from api_request when the tool-details opt-out is set", () => {
+      const payload = createOtlpPayload([makeRecord({ skillName })], { logToolDetails: false });
+
+      expect(findAttr(apiRecords(payload)[0].attributes, "skill.name")).toBeUndefined();
+    });
+
+    it("emits no skill_activated record when the tool-details opt-out is set", () => {
+      const payload = createOtlpPayload([makeRecord({ skillName })], { logToolDetails: false });
+
+      expect(activations(payload)).toHaveLength(0);
+    });
+
+    it("sends the usage record with tokens and cost when the opt-out is set", () => {
+      const record = makeRecord({ skillName, costUsd: 0.1234 });
+      const payload = createOtlpPayload([record], { logToolDetails: false });
+      const attrs = apiRecords(payload)[0].attributes;
+      const attributed = createOtlpPayload([record], { logToolDetails: true });
+
+      expect(findAttr(attrs, "input_tokens")?.value.stringValue).toBe("100");
+      expect(findAttr(attrs, "output_tokens")?.value.stringValue).toBe("50");
+      expect(findAttr(attrs, "cost_usd")?.value.stringValue).toBe("0.123400");
+      expect(findAttr(attrs, "transaction_id")?.value.stringValue).toBe(
+        findAttr(apiRecords(attributed)[0].attributes, "transaction_id")?.value.stringValue,
+      );
+    });
+
+    it("leaks no skill name anywhere in the payload when the opt-out is set", () => {
+      const payload = createOtlpPayload([makeRecord({ skillName })], { logToolDetails: false });
+      const serialized = JSON.stringify(payload);
+
+      expect(serialized).not.toContain(skillName);
+      expect(serialized).not.toContain("skill.name");
+    });
+
+    it("keeps skill attribution when the opt-out is absent", () => {
+      for (const logToolDetails of [undefined, true]) {
+        const payload = createOtlpPayload([makeRecord({ skillName })], { logToolDetails });
+
+        expect(findAttr(apiRecords(payload)[0].attributes, "skill.name")?.value.stringValue).toBe(
+          skillName,
+        );
+        expect(activations(payload)).toHaveLength(1);
+      }
+    });
+
+    it("emits no activation and no event.sequence for a skill-free record under the opt-out", () => {
+      const payload = createOtlpPayload([makeRecord()], { logToolDetails: false });
+
+      expect(activations(payload)).toHaveLength(0);
+      expect(findAttr(apiRecords(payload)[0].attributes, "event.sequence")).toBeUndefined();
+    });
   });
 });

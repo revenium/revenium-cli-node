@@ -16,6 +16,7 @@ export interface HealthCheckResult {
   statusCode?: number;
   message: string;
   latencyMs?: number;
+  processedEvents?: number;
 }
 
 export type ShellType = "bash" | "zsh" | "fish" | "unknown";
@@ -93,6 +94,7 @@ export interface OTLPResponse {
   id: string;
   resourceType: string;
   processedEvents: number;
+  failedEvents?: number;
   created: string;
 }
 

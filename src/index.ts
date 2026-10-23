@@ -16,8 +16,10 @@ export type {
 
 export { validateApiKey, validateEmail, validateEndpointUrl } from "./_core/config/validator.js";
 export { sendOtlpLogs, sendOtlpTraces } from "./_core/api/otlp-client.js";
+export { installEnvProxyDispatcher } from "./_core/net/proxy.js";
 export {
   checkEndpointHealth,
+  checkPayloadDelivery,
   createTestPayload,
   generateTestSessionId,
 } from "./_core/api/health-check.js";

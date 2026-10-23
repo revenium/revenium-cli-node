@@ -5,6 +5,7 @@ import {
   DEFAULT_TARGET_TPS,
   MAX_BATCH_SIZE,
   DEFAULT_BATCH_SIZE,
+  MIN_REQUEST_INTERVAL_MS,
 } from "../../../src/_core/api/rate-limiter.js";
 
 describe("rate-limiter constants", () => {
@@ -12,6 +13,7 @@ describe("rate-limiter constants", () => {
     expect(DEFAULT_TARGET_TPS).toBe(25);
     expect(MAX_BATCH_SIZE).toBe(100);
     expect(DEFAULT_BATCH_SIZE).toBe(10);
+    expect(MIN_REQUEST_INTERVAL_MS).toBe(1000);
   });
 });
 
@@ -169,8 +171,7 @@ describe("enforceRateLimit", () => {
     expect(sleepCalls).toHaveLength(1);
     expect(sleepCalls[0][1]).toBe(5000);
 
-    const requiredInterval = (1 / 5) * 1000;
-    expect(state.nextAvailableTimeMs).toBe(now + 5000 + requiredInterval);
+    expect(state.nextAvailableTimeMs).toBe(now + 5000 + MIN_REQUEST_INTERVAL_MS);
   });
 
   it("uses userDelayMs when larger than calculated delay on subsequent calls", async () => {
@@ -201,6 +202,28 @@ describe("enforceRateLimit", () => {
 
     const requiredInterval = (100 / 5) * 1000;
     expect(state.nextAvailableTimeMs).toBe(Date.now() + requiredInterval);
+  });
+
+  it("never schedules requests closer than one second apart", async () => {
+    const state = createRateLimiterState();
+    const now = Date.now();
+
+    const promise = enforceRateLimit(state, { batchSize: 1, targetTps: DEFAULT_TARGET_TPS });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(state.nextAvailableTimeMs).toBe(now + MIN_REQUEST_INTERVAL_MS);
+  });
+
+  it("keeps record pacing when it is slower than one request per second", async () => {
+    const state = createRateLimiterState();
+    const now = Date.now();
+
+    const promise = enforceRateLimit(state, { batchSize: MAX_BATCH_SIZE, targetTps: 25 });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(state.nextAvailableTimeMs).toBe(now + 4000);
   });
 
   it("handles sequential batches with consistent timing", async () => {

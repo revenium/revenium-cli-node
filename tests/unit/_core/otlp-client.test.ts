@@ -293,6 +293,38 @@ describe("global rate limiting", () => {
     );
   });
 
+  it("enforces the rate limit on every retry, not only the first attempt", async () => {
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        text: () => Promise.resolve("retry"),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        text: () => Promise.resolve("retry"),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ id: "1", resourceType: "log", processedEvents: 1, created: "now" }),
+        text: () => Promise.resolve("ok"),
+        headers: new Headers(),
+      });
+
+    await sendOtlpLogs("https://api.revenium.ai", apiKey, mockPayload);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(enforceRateLimitMock).toHaveBeenCalledTimes(3);
+  });
+
   it("enforces rate limit on sendOtlpTraces", async () => {
     mockFetchOk();
     await sendOtlpTraces("https://api.revenium.ai", apiKey, mockPayload as any, {
@@ -302,5 +334,53 @@ describe("global rate limiting", () => {
       expect.any(Object),
       expect.objectContaining({ batchSize: 25 }),
     );
+  });
+});
+
+describe("network failure reporting", () => {
+  function mockFetchRejects(cause: unknown) {
+    (global.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new TypeError("fetch failed"), { cause }),
+    );
+  }
+
+  async function captureMessage(): Promise<string> {
+    try {
+      await sendOtlpLogs("https://api.revenium.ai", apiKey, mockPayload);
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error("expected sendOtlpLogs to reject");
+  }
+
+  it("names the certificate code and the CA hint instead of a bare fetch failed", async () => {
+    mockFetchRejects({
+      code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      message: "self signed certificate",
+    });
+
+    const message = await captureMessage();
+    expect(message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(message).toContain("NODE_EXTRA_CA_CERTS");
+    expect(message).not.toBe("fetch failed");
+  });
+
+  it("names the DNS code without leaking the API key carried in the cause", async () => {
+    mockFetchRejects({
+      code: "ENOTFOUND",
+      message: `getaddrinfo ENOTFOUND no-such-host.invalid (key ${apiKey})`,
+    });
+
+    const message = await captureMessage();
+    expect(message).toContain("ENOTFOUND");
+    expect(message).not.toContain(apiKey);
+  });
+
+  it("retries a transport code carried only in the cause of the raw error", async () => {
+    mockFetchRejects({ code: "ENOTFOUND", message: "getaddrinfo ENOTFOUND no-such-host.invalid" });
+
+    const message = await captureMessage();
+    expect(message).toContain("ENOTFOUND");
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 });

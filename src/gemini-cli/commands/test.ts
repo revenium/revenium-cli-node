@@ -2,8 +2,10 @@ import chalk from "chalk";
 import ora from "ora";
 import { loadConfig, configExists } from "../config/loader.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
+import { sanitizeErrorMessage } from "../../_core/api/resilience.js";
 import { createTestPayload, generateTestSessionId } from "../../_core/api/health-check.js";
 import { LOG_BODY_VALUES, SCOPE_NAMES } from "../../_core/schema/field-registry.js";
+import { printLegacyConfigNotice } from "./legacy-notice.js";
 
 interface TestOptions {
   verbose?: boolean;
@@ -24,6 +26,10 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  if (config.legacy) {
+    printLegacyConfigNotice();
+  }
+
   const sessionId = generateTestSessionId();
   const payload = createTestPayload(sessionId, "gemini-cli", {
     email: config.email,
@@ -35,7 +41,7 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
 
   if (options.verbose) {
     console.log(chalk.dim("Test payload:"));
-    console.log(chalk.dim(JSON.stringify(payload, null, 2)));
+    console.log(chalk.dim(sanitizeErrorMessage(JSON.stringify(payload, null, 2), config.apiKey)));
     console.log("");
   }
 

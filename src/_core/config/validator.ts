@@ -1,5 +1,10 @@
-import { API_KEY_PREFIXES } from "../constants.js";
 import type { ValidationResult } from "../types/index.js";
+import {
+  classifyApiKeyScope,
+  LEGACY_KEY_PREFIX,
+  READ_KEY_REJECTION_MESSAGE,
+  UNSUPPORTED_KEY_PREFIX_MESSAGE,
+} from "./key-scope.js";
 
 export function validateApiKey(apiKey: string): ValidationResult {
   const errors: string[] = [];
@@ -9,12 +14,17 @@ export function validateApiKey(apiKey: string): ValidationResult {
     return { valid: false, errors };
   }
 
-  const hasValidPrefix = API_KEY_PREFIXES.some((p) => apiKey.startsWith(p));
-  if (!hasValidPrefix) {
-    errors.push(`API key must start with "hak_" or "rev_"`);
+  const scope = classifyApiKeyScope(apiKey);
+
+  if (scope === "unknown") {
+    errors.push(UNSUPPORTED_KEY_PREFIX_MESSAGE);
   }
 
-  if (apiKey.startsWith("hak_")) {
+  if (scope === "read") {
+    errors.push(READ_KEY_REJECTION_MESSAGE);
+  }
+
+  if (apiKey.startsWith(LEGACY_KEY_PREFIX)) {
     const parts = apiKey.split("_");
     if (parts.length < 3) {
       errors.push("Legacy API key format should be: hak_{tenant}_{key}");

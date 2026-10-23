@@ -1,7 +1,10 @@
 import chalk from "chalk";
 import ora from "ora";
-import { loadConfig, configExists } from "../config/loader.js";
+import { configExists, getConfigPath, findUnknownConfigKeys } from "../config/loader.js";
+import { loadMigratedConfig } from "./migrated-config.js";
+import { printUnknownConfigKeys } from "../../_core/ui/unknown-config-keys.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
+import { sanitizeErrorMessage } from "../../_core/api/resilience.js";
 import { createTestPayload, generateTestSessionId } from "../../_core/api/health-check.js";
 import { LOG_BODY_VALUES, SCOPE_NAMES } from "../../_core/schema/field-registry.js";
 
@@ -18,7 +21,9 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const config = await loadConfig();
+  printUnknownConfigKeys(getConfigPath(), await findUnknownConfigKeys());
+
+  const config = await loadMigratedConfig();
   if (!config) {
     console.log(chalk.red("Could not load configuration"));
     process.exit(1);
@@ -35,7 +40,9 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
 
   if (options.verbose) {
     console.log(chalk.dim("Test payload:"));
-    console.log(chalk.dim(JSON.stringify(payload, null, 2)));
+    console.log(
+      chalk.dim(sanitizeErrorMessage(JSON.stringify(payload, null, 2), config.reveniumApiKey)),
+    );
     console.log("");
   }
 

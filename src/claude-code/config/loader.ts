@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -9,8 +8,9 @@ import {
   getFullOtlpEndpoint,
   getManagementEndpoint,
 } from "../../_core/config/loader.js";
-import { CLAUDE_HOME_DIR_NAME, ENV_VARS } from "../constants.js";
-import { REVENIUM_ENV_FILE } from "../../_core/constants.js";
+import { ENV_VARS } from "../constants.js";
+import { REVENIUM_ENV_FILE, DEFAULT_REVENIUM_URL } from "../../_core/constants.js";
+import { getFixedClaudeHomeDir } from "./claude-config-dir.js";
 import { getConfigPath as getCursorConfigPath } from "../../cursor/config/loader.js";
 
 export interface ClaudeCodeConfig {
@@ -37,7 +37,7 @@ export function getConfigPath(): string {
   if (override && override.trim()) {
     return override.trim();
   }
-  const claudePath = join(homedir(), CLAUDE_HOME_DIR_NAME, REVENIUM_ENV_FILE);
+  const claudePath = join(getFixedClaudeHomeDir(), REVENIUM_ENV_FILE);
   if (existsSync(claudePath)) {
     return claudePath;
   }
@@ -54,19 +54,29 @@ export function configExists(): boolean {
   return existsSync(getConfigPath());
 }
 
-/**
- * Derives the fish companion path for a config file. Only the standard `.env` naming has a known
- * fish sibling; a custom `REVENIUM_CONFIG_PATH` override without that suffix has no separate fish
- * file, so callers must treat an unchanged return value as "no fish file" rather than upgrading
- * the same file twice under two different shell dialects.
- */
-export function getFishConfigPath(envPath: string): string {
-  return envPath.endsWith(".env") ? envPath.replace(/\.env$/, ".fish") : envPath;
+export function isCursorProvidedConfig(): boolean {
+  return getConfigPath() === getCursorConfigPath();
 }
 
 function extractApiKeyFromHeaders(headers: string): string | undefined {
   const match = headers.match(/x-api-key=\s*((?:hak_|rev_)[^\s"]+)/);
   return match?.[1];
+}
+
+function resolveApiKey(env: Record<string, string>): string | undefined {
+  // Within a single file the OTLP header key wins: it is the form the Claude Code exporter
+  // actually sends, so a file carrying both must stay consistent with what is metered.
+  const fromHeaders = extractApiKeyFromHeaders(env[ENV_VARS.OTLP_HEADERS] || "");
+  if (fromHeaders) {
+    return fromHeaders;
+  }
+  return env[ENV_VARS.CURSOR_API_KEY]?.trim() || undefined;
+}
+
+function resolveEndpoint(env: Record<string, string>): string {
+  return extractBaseEndpoint(
+    env[ENV_VARS.OTLP_ENDPOINT] || env[ENV_VARS.CURSOR_ENDPOINT] || DEFAULT_REVENIUM_URL,
+  );
 }
 
 export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
@@ -80,9 +90,7 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
     const content = await readFile(configPath, "utf-8");
     const env = parseEnvContent(content);
 
-    const fullEndpoint = env[ENV_VARS.OTLP_ENDPOINT] || "";
-    const headers = env[ENV_VARS.OTLP_HEADERS] || "";
-    const apiKey = extractApiKeyFromHeaders(headers);
+    const apiKey = resolveApiKey(env);
 
     if (!apiKey) {
       return null;
@@ -96,20 +104,24 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
     const logToolDetails =
       logToolDetailsRaw === "1" ? true : logToolDetailsRaw === "0" ? false : undefined;
 
-    const resourceAttrsStr = env["OTEL_RESOURCE_ATTRIBUTES"] || "";
+    const resourceAttrsStr = env[ENV_VARS.RESOURCE_ATTRIBUTES] || "";
     const resourceAttrs = parseOtelResourceAttributes(resourceAttrsStr);
 
     const organizationName =
       resourceAttrs["organization.name"] ||
       resourceAttrs["organization.id"] ||
-      env[ENV_VARS.ORGANIZATION_ID];
+      env[ENV_VARS.ORGANIZATION_ID] ||
+      env[ENV_VARS.CURSOR_ORGANIZATION_NAME];
 
     const productName =
-      resourceAttrs["product.name"] || resourceAttrs["product.id"] || env[ENV_VARS.PRODUCT_ID];
+      resourceAttrs["product.name"] ||
+      resourceAttrs["product.id"] ||
+      env[ENV_VARS.PRODUCT_ID] ||
+      env[ENV_VARS.CURSOR_PRODUCT_NAME];
 
     return {
       apiKey,
-      endpoint: extractBaseEndpoint(fullEndpoint),
+      endpoint: resolveEndpoint(env),
       email: env[ENV_VARS.SUBSCRIBER_EMAIL],
       extraUsageEnabled,
       organizationName,
@@ -117,31 +129,13 @@ export async function loadConfig(): Promise<ClaudeCodeConfig | null> {
       teamId: env[ENV_VARS.TEAM_ID] || undefined,
       logToolDetails,
       // Process env wins over the config file: the constant is documented as a shell-level
-      // override and config/writer.ts emits it as an export (PRODUCT-2674 bug 2).
+      // override (PRODUCT-2674 bug 2).
       managementEndpoint:
         process.env[ENV_VARS.MGMT_ENDPOINT]?.trim() || env[ENV_VARS.MGMT_ENDPOINT] || undefined,
     };
   } catch {
     return null;
   }
-}
-
-/** True when the current shell exports the flag Claude Code needs to report skill names. */
-export function isToolDetailsLoaded(): boolean {
-  return process.env[ENV_VARS.LOG_TOOL_DETAILS] === "1";
-}
-
-/**
- * True when the current shell explicitly exports `OTEL_LOG_TOOL_DETAILS=0`. This is a deliberate,
- * active opt-out and must not be reported as "unset" even when the saved config file has the flag
- * enabled, because the process-level value always wins once the config is sourced.
- */
-export function isToolDetailsExplicitlyDisabled(): boolean {
-  return process.env[ENV_VARS.LOG_TOOL_DETAILS] === "0";
-}
-
-export function isEnvLoaded(): boolean {
-  return process.env[ENV_VARS.TELEMETRY_ENABLED] === "1" && !!process.env[ENV_VARS.OTLP_ENDPOINT];
 }
 
 export { getFullOtlpEndpoint, getManagementEndpoint };

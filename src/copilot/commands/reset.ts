@@ -2,6 +2,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { configExists } from "../config/loader.js";
 import { resetState, loadState } from "../core/sync/state-manager.js";
+import { countSentRecords } from "../../_core/sync/sent-record-log.js";
 
 export async function resetCommand(): Promise<void> {
   console.log(chalk.bold("\nRevenium GitHub Copilot Metering Reset\n"));
@@ -23,14 +24,18 @@ export async function resetCommand(): Promise<void> {
   console.log(chalk.bold("Current state:"));
   console.log(`  Last Sync:        ${new Date(state.lastSyncTimestamp).toISOString()}`);
   console.log(`  Total Synced:     ${state.totalEventsSynced}`);
-  console.log(`  Cached Hashes:    ${state.recentHashes.length}`);
+  console.log(`  Cached Hashes:    ${countSentRecords(state.sentRecords)}`);
 
   const spinner = ora("Resetting sync state...").start();
 
   try {
     await resetState();
     spinner.succeed("Sync state reset successfully");
-    console.log(chalk.dim("\nNext sync will start fresh. Run `revenium-copilot sync` to begin."));
+    console.log(
+      chalk.dim(
+        "\nNext sync will start fresh. Run `revenium-copilot backfill` to reimport history.",
+      ),
+    );
   } catch (error) {
     spinner.fail("Failed to reset state");
     console.error(chalk.red(`Error: ${error instanceof Error ? error.message : "Unknown error"}`));

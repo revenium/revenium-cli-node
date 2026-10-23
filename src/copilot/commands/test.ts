@@ -1,8 +1,15 @@
 import { randomBytes } from "node:crypto";
 import chalk from "chalk";
 import ora from "ora";
-import { loadConfig, configExists } from "../config/loader.js";
+import {
+  loadConfig,
+  configExists,
+  getConfigPath,
+  findUnknownConfigKeys,
+} from "../config/loader.js";
+import { printUnknownConfigKeys } from "../../_core/ui/unknown-config-keys.js";
 import { sendOtlpTraces } from "../../_core/api/otlp-client.js";
+import { sanitizeErrorMessage } from "../../_core/api/resilience.js";
 import type { OTLPTracesPayload } from "../../_core/types/index.js";
 import { SERVICE_NAME, SCOPE_NAME } from "../constants.js";
 
@@ -12,7 +19,7 @@ interface TestOptions {
 
 function createTestTracesPayload(
   serviceName: string,
-  options?: { email?: string; organizationName?: string; productName?: string },
+  options?: { organizationName?: string; productName?: string },
 ): OTLPTracesPayload {
   const now = BigInt(Date.now()) * 1_000_000n;
   const traceId = randomBytes(16).toString("hex");
@@ -27,9 +34,6 @@ function createTestTracesPayload(
     { key: "gen_ai.response.finish_reasons", value: { stringValue: "stop" } },
   ];
 
-  if (options?.email) {
-    attributes.push({ key: "user.email", value: { stringValue: options.email } });
-  }
   if (options?.organizationName) {
     attributes.push({ key: "organization.name", value: { stringValue: options.organizationName } });
   }
@@ -73,6 +77,8 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  printUnknownConfigKeys(getConfigPath(), await findUnknownConfigKeys());
+
   const config = await loadConfig();
   if (!config) {
     console.log(chalk.red("Could not load configuration"));
@@ -80,14 +86,15 @@ export async function testCommand(options: TestOptions = {}): Promise<void> {
   }
 
   const payload = createTestTracesPayload(SERVICE_NAME, {
-    email: config.email,
     organizationName: config.organizationName,
     productName: config.productName,
   });
 
   if (options.verbose) {
     console.log(chalk.dim("Test payload:"));
-    console.log(chalk.dim(JSON.stringify(payload, null, 2)));
+    console.log(
+      chalk.dim(sanitizeErrorMessage(JSON.stringify(payload, null, 2), config.reveniumApiKey)),
+    );
     console.log("");
   }
 

@@ -5,6 +5,7 @@ import { setupCommand, type SetupOptions } from "../commands/setup.js";
 import { statusCommand } from "../commands/status.js";
 import { testCommand } from "../commands/test.js";
 import { backfillCommand } from "../commands/backfill.js";
+import { installEnvProxyDispatcher } from "../../_core/net/proxy.js";
 import pkg from "../../../package.json";
 
 export const program = new Command();
@@ -16,7 +17,6 @@ interface CliSetupOptions {
   organization?: string;
   product?: string;
   teamId?: string;
-  skipShellUpdate?: boolean;
   extraUsageEnabled?: boolean;
   logToolDetails?: boolean;
   mgmtEndpoint?: string;
@@ -30,7 +30,6 @@ export function toSetupOptions(options: CliSetupOptions): SetupOptions {
     organizationName: options.organization,
     productName: options.product,
     teamId: options.teamId,
-    skipShellUpdate: options.skipShellUpdate,
     extraUsageEnabled: options.extraUsageEnabled || undefined,
     // Commander sets this to false only when `--no-log-tool-details` is passed.
     logToolDetails: options.logToolDetails === false ? false : undefined,
@@ -46,7 +45,7 @@ program
 program
   .command("setup")
   .description("Interactive setup wizard to configure Claude Code metering")
-  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
+  .option("-k, --api-key <key>", "Revenium metering key rev_mk_... (recommended)")
   .option("-e, --email <email>", "Email for usage attribution")
   .option("--endpoint <url>", "Revenium API endpoint URL")
   .option("-o, --organization <name>", "Organization name for cost attribution")
@@ -60,12 +59,12 @@ program
     "Override the management-plane API base URL used for session attribution " +
       "(defaults to <endpoint>/profitstream — set this if your environment's context path differs)",
   )
-  .option("--skip-shell-update", "Skip automatic shell profile update")
   .option("--extra-usage-enabled", "Set CLAUDE_CODE_EXTRA_USAGE_ENABLED=1 in SDK config")
   .option(
     "--no-log-tool-details",
     "Write OTEL_LOG_TOOL_DETAILS=0 instead of 1. Claude Code then redacts skill names on " +
-      "skill_activated and Revenium cannot attribute plugin skill usage",
+      "skill_activated and Revenium cannot attribute plugin skill usage. Applies to live " +
+      "telemetry and to backfill, which withholds skill names from imported history",
   )
   .action(async (options: CliSetupOptions) => {
     await setupCommand(toSetupOptions(options));
@@ -76,7 +75,8 @@ program
   .description("Check current configuration and endpoint connectivity")
   .option(
     "--fix",
-    "Add OTEL_LOG_TOOL_DETAILS=1 to an existing config that predates the flag (idempotent)",
+    "Re-apply the Revenium telemetry variables to the Claude Code settings.json " +
+      "($CLAUDE_CONFIG_DIR, else ~/.claude) (idempotent)",
   )
   .action(async (options: { fix?: boolean }) => {
     await statusCommand({ fix: options.fix });
@@ -105,6 +105,14 @@ program
     "--email <email>",
     "Email to attribute backfilled usage to (overrides the configured email; prompted if neither is set)",
   )
+  .option(
+    "--project <paths>",
+    "Import only these projects, comma-separated (full project path or its folder name)",
+  )
+  .option(
+    "--exclude-project <paths>",
+    "Skip these projects, comma-separated (full project path or its folder name)",
+  )
   .action(async (options) => {
     const batchSize = parseInt(options.batchSize, 10);
     if (!Number.isFinite(batchSize) || batchSize < 1 || batchSize > 100) {
@@ -125,9 +133,11 @@ program
       delay,
       verbose: options.verbose,
       email: options.email,
+      project: options.project,
+      excludeProject: options.excludeProject,
     });
   });
 
 if (process.env.NODE_ENV !== "test") {
-  program.parse();
+  void installEnvProxyDispatcher().then(() => program.parse());
 }

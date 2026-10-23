@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   checkEndpointHealth,
+  checkPayloadDelivery,
   createTestPayload,
   generateTestSessionId,
 } from "../../../src/_core/api/health-check.js";
@@ -163,6 +164,16 @@ describe("createTestPayload", () => {
       expect(resourceAttrs.find((a) => a.key === "user.email")).toBeUndefined();
     });
 
+    it("never copies the Revenium API key out of OTEL_RESOURCE_ATTRIBUTES", () => {
+      process.env.OTEL_RESOURCE_ATTRIBUTES = "revenium.api_key=hak_x,product.name=P";
+      const payload = createTestPayload("sess-1", "test-service");
+      const resourceAttrs = payload.resourceLogs[0].resource?.attributes ?? [];
+
+      expect(resourceAttrs.find((a) => a.key === "product.name")?.value.stringValue).toBe("P");
+      expect(resourceAttrs.find((a) => a.key === "revenium.api_key")).toBeUndefined();
+      expect(JSON.stringify(payload)).not.toContain("hak_x");
+    });
+
     it("does not duplicate org/product already added via options", () => {
       process.env.OTEL_RESOURCE_ATTRIBUTES = "organization.name=EnvOrg,product.name=EnvProduct";
       const payload = createTestPayload("sess-1", "test-service", {
@@ -226,6 +237,24 @@ describe("checkEndpointHealth", () => {
     expect(result.message).toContain("401");
   });
 
+  it("stays healthy on a 200 response that processed no events, because the generic payload is not mapped for every service", async () => {
+    mockedSendOtlpLogs.mockResolvedValue({
+      id: "1",
+      resourceType: "log",
+      processedEvents: 0,
+      failedEvents: 1,
+      created: "now",
+    });
+
+    const result = await checkEndpointHealth(
+      "https://api.revenium.ai",
+      "hak_unknown_key",
+      "test-service",
+    );
+
+    expect(result.healthy).toBe(true);
+  });
+
   it("reports latency", async () => {
     mockedSendOtlpLogs.mockResolvedValue({
       id: "1",
@@ -240,5 +269,67 @@ describe("checkEndpointHealth", () => {
       "test-service",
     );
     expect(typeof result.latencyMs).toBe("number");
+  });
+});
+
+describe("checkPayloadDelivery", () => {
+  it("sends the supplied payload to the given endpoint", async () => {
+    mockedSendOtlpLogs.mockResolvedValue({
+      id: "1",
+      resourceType: "log",
+      processedEvents: 1,
+      created: "now",
+    });
+
+    const payload = createTestPayload("sess-1", "codex-cli");
+    const result = await checkPayloadDelivery(
+      "https://api.revenium.ai",
+      "hak_test_key123",
+      payload,
+    );
+
+    expect(mockedSendOtlpLogs).toHaveBeenCalledWith(
+      "https://api.revenium.ai",
+      "hak_test_key123",
+      payload,
+    );
+    expect(result.healthy).toBe(true);
+  });
+
+  it("rejects a 200 response that processed no events", async () => {
+    mockedSendOtlpLogs.mockResolvedValue({
+      id: "1",
+      resourceType: "log",
+      processedEvents: 0,
+      failedEvents: 1,
+      created: "now",
+    });
+
+    const result = await checkPayloadDelivery(
+      "https://api.revenium.ai",
+      "hak_unknown_key",
+      createTestPayload("sess-1", "codex-cli"),
+    );
+
+    expect(result.healthy).toBe(false);
+    expect(result.message).toContain("0 event(s) processed, 1 rejected");
+  });
+
+  it("rejects a 200 response that reports failed events alongside processed ones", async () => {
+    mockedSendOtlpLogs.mockResolvedValue({
+      id: "1",
+      resourceType: "log",
+      processedEvents: 1,
+      failedEvents: 1,
+      created: "now",
+    });
+
+    const result = await checkPayloadDelivery(
+      "https://api.revenium.ai",
+      "hak_test_key123",
+      createTestPayload("sess-1", "codex-cli"),
+    );
+
+    expect(result.healthy).toBe(false);
   });
 });

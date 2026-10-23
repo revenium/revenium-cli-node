@@ -29,10 +29,23 @@ describe("loadState", () => {
     expect(state.lastSyncTimestamp).toBe(0);
     expect(state.lastSyncEventCount).toBe(0);
     expect(state.totalEventsSynced).toBe(0);
-    expect(state.recentHashes).toEqual([]);
+    expect(state.sentRecords).toEqual({});
   });
 
   it("loads state from existing file", async () => {
+    const data = {
+      lastSyncTimestamp: 12345,
+      lastSyncEventCount: 10,
+      totalEventsSynced: 100,
+      sentRecords: { "2024-06-15": ["abc"] },
+    };
+    writeFileSync(join(testDir, "state.json"), JSON.stringify(data));
+    const state = await loadState();
+    expect(state.lastSyncTimestamp).toBe(12345);
+    expect(state.sentRecords).toEqual({ "2024-06-15": ["abc"] });
+  });
+
+  it("drops a legacy recentHashes file without losing the watermark", async () => {
     const data = {
       lastSyncTimestamp: 12345,
       lastSyncEventCount: 10,
@@ -42,7 +55,19 @@ describe("loadState", () => {
     writeFileSync(join(testDir, "state.json"), JSON.stringify(data));
     const state = await loadState();
     expect(state.lastSyncTimestamp).toBe(12345);
-    expect(state.recentHashes).toEqual(["abc"]);
+    expect(state.sentRecords).toEqual({});
+  });
+
+  it("degrades a corrupt sentRecords value to an empty log", async () => {
+    for (const sentRecords of [["abc"], "abc", { "2024-06-15": [1, 2] }]) {
+      writeFileSync(
+        join(testDir, "state.json"),
+        JSON.stringify({ lastSyncTimestamp: 12345, sentRecords }),
+      );
+      const state = await loadState();
+      expect(state.lastSyncTimestamp).toBe(12345);
+      expect(state.sentRecords).toEqual({});
+    }
   });
 
   it("returns default on corrupt JSON", async () => {
@@ -58,25 +83,24 @@ describe("saveState", () => {
       lastSyncTimestamp: 999,
       lastSyncEventCount: 5,
       totalEventsSynced: 50,
-      recentHashes: ["h1", "h2"],
+      sentRecords: { "2024-06-15": ["h1", "h2"] },
     });
     const content = readFileSync(join(testDir, "state.json"), "utf-8");
     const parsed = JSON.parse(content);
     expect(parsed.lastSyncTimestamp).toBe(999);
-    expect(parsed.recentHashes).toEqual(["h1", "h2"]);
+    expect(parsed.sentRecords).toEqual({ "2024-06-15": ["h1", "h2"] });
   });
 
-  it("trims hashes to MAX_RECENT_HASHES", async () => {
-    const hashes = Array.from({ length: 15000 }, (_, i) => `h${i}`);
+  it("round-trips a log far larger than the former hash cap", async () => {
+    const fingerprints = Array.from({ length: 25_000 }, (_, i) => `h${i}`);
     await saveState({
       lastSyncTimestamp: 1,
       lastSyncEventCount: 0,
       totalEventsSynced: 0,
-      recentHashes: hashes,
+      sentRecords: { "2024-06-15": fingerprints },
     });
-    const content = readFileSync(join(testDir, "state.json"), "utf-8");
-    const parsed = JSON.parse(content);
-    expect(parsed.recentHashes.length).toBeLessThanOrEqual(10000);
+    const state = await loadState();
+    expect(state.sentRecords["2024-06-15"]).toHaveLength(25_000);
   });
 });
 
@@ -86,6 +110,6 @@ describe("resetState", () => {
     const content = readFileSync(join(testDir, "state.json"), "utf-8");
     const parsed = JSON.parse(content);
     expect(parsed.lastSyncTimestamp).toBe(0);
-    expect(parsed.recentHashes).toEqual([]);
+    expect(parsed.sentRecords).toEqual({});
   });
 });

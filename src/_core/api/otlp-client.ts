@@ -4,14 +4,13 @@ import {
   jitteredBackoff,
   getMaxRetries,
   getRequestTimeoutMs,
-  getBackoffMaxMs,
   sleep,
   isRetryableStatusCode,
   isNonRetryable4xx,
-  isRetryableNetworkError,
-  parseRetryAfterMs,
+  retryDelayMs,
   sanitizeErrorMessage,
 } from "./resilience.js";
+import { describeTransportFailure, isRetryableTransportError } from "./network-error.js";
 import { createRateLimiterState, enforceRateLimit } from "./rate-limiter.js";
 import type { RateLimiterState } from "./rate-limiter.js";
 
@@ -41,17 +40,18 @@ async function sendOtlpRequest(
   options?: OtlpSendOptions,
 ): Promise<OTLPResponse> {
   const state = getGlobalRateLimiterState();
-  await enforceRateLimit(state, {
+  const rateLimit = {
     batchSize: options?.batchSize ?? 1,
     userDelayMs: options?.userDelayMs,
-  });
+  };
 
   let lastError: Error | null = null;
   const maxRetries = getMaxRetries();
   const timeoutMs = getRequestTimeoutMs();
-  const backoffMaxMs = getBackoffMaxMs();
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    await enforceRateLimit(state, rateLimit);
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -84,32 +84,24 @@ async function sendOtlpRequest(
       lastError = new Error(errorMsg);
 
       if (isRetryableStatusCode(response.status) && attempt < maxRetries - 1) {
-        const backoff = jitteredBackoff(attempt);
-        const retryAfterMs = parseRetryAfterMs(response);
-        const cappedRetryAfter =
-          retryAfterMs !== null ? Math.min(retryAfterMs, backoffMaxMs) : null;
-        const delay = cappedRetryAfter !== null ? Math.max(cappedRetryAfter, backoff) : backoff;
-        await sleep(delay);
+        await sleep(retryDelayMs(response, attempt));
         continue;
       }
     } catch (error) {
       clearTimeout(timeoutId);
 
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          lastError = new Error(`Request timeout after ${timeoutMs}ms`);
-        } else if (lastError?.message !== error.message) {
-          lastError = new Error(sanitizeErrorMessage(error.message, apiKey));
-        }
-
-        if (isRetryableNetworkError(lastError!) && attempt < maxRetries - 1) {
-          await sleep(jitteredBackoff(attempt));
-          continue;
-        }
-
-        throw lastError!;
+      if (!(error instanceof Error)) {
+        throw error;
       }
-      throw error;
+
+      lastError = new Error(describeTransportFailure(error, apiKey, timeoutMs, "Revenium OTLP"));
+
+      if (isRetryableTransportError(error) && attempt < maxRetries - 1) {
+        await sleep(jitteredBackoff(attempt));
+        continue;
+      }
+
+      throw lastError;
     }
   }
 

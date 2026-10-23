@@ -1,10 +1,14 @@
 import chalk from "chalk";
 import ora from "ora";
-import { loadConfig, configExists, isEnvLoaded, getConfigPath } from "../config/loader.js";
+import { loadConfig, configExists, getConfigPath } from "../config/loader.js";
 import { checkEndpointHealth } from "../../_core/api/health-check.js";
 import { LOG_BODY_VALUES, SCOPE_NAMES } from "../../_core/schema/field-registry.js";
 import { maskApiKey, maskEmail } from "../../_core/utils/masking.js";
 import { detectShell, getProfilePath } from "../../_core/shell/detector.js";
+import { isProfileConfigured } from "../../_core/shell/profile-updater.js";
+import { WRAPPER_LAUNCH_COMMAND } from "../shell/wrapper.js";
+import { SHELL_PROFILE_MARKER } from "../constants.js";
+import { printLegacyConfigNotice } from "./legacy-notice.js";
 
 export async function statusCommand(): Promise<void> {
   console.log(chalk.bold("\nRevenium Gemini CLI Metering Status\n"));
@@ -39,15 +43,18 @@ export async function statusCommand(): Promise<void> {
   if (config.productName) {
     console.log(`  Product:    ${config.productName}`);
   }
+  if (config.legacy) {
+    printLegacyConfigNotice();
+  }
+
   console.log("\n" + chalk.bold("Environment:"));
   const shellType = detectShell();
-  const configFile = shellType === "fish" ? "~/.gemini/revenium.fish" : "~/.gemini/revenium.env";
 
-  if (isEnvLoaded()) {
-    console.log(chalk.green("  Environment variables are loaded in current shell"));
+  if (await isProfileConfigured(SHELL_PROFILE_MARKER, WRAPPER_LAUNCH_COMMAND)) {
+    console.log(chalk.green("  Gemini wrapper is installed in the shell profile"));
   } else {
-    console.log(chalk.yellow("  Environment variables not loaded in current shell"));
-    console.log(chalk.dim(`  Run: source ${configFile}`));
+    console.log(chalk.yellow("  Gemini wrapper is not installed in the shell profile"));
+    console.log(chalk.dim("  Run: revenium-gemini setup"));
   }
 
   const profilePath = getProfilePath(shellType);

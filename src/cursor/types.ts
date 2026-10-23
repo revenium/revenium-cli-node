@@ -22,6 +22,8 @@ export interface CursorUsageEvent {
     cacheReadTokens: number;
     totalCents: number;
   } | null;
+  chargedCents?: number | null;
+  isChargeable?: boolean | null;
   userEmail: string;
 }
 
@@ -41,7 +43,7 @@ export interface SyncState {
   lastSyncTimestamp: number;
   lastSyncEventCount: number;
   totalEventsSynced: number;
-  recentHashes: string[];
+  sentRecords: Record<string, string[]>;
 }
 
 export interface SyncResult {

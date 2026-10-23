@@ -4,12 +4,16 @@ import {
   isLegacyFlatKeyForm,
   hasOtelSection,
   hasFeaturesRuntimeMetrics,
-  extractOtelValues,
+  hasDisabledExporter,
+  resolveOtelCredentials,
   getCodexConfigPath,
 } from "../config/loader.js";
 import { generateTestSessionId } from "../../_core/api/health-check.js";
 import { sendOtlpLogs } from "../../_core/api/otlp-client.js";
 import { createCodexMapperTestPayload } from "../payloads/test-payload.js";
+import { isProfileConfigured } from "../../_core/shell/profile-updater.js";
+import { WRAPPER_COMMAND } from "../shell/wrapper.js";
+import { SHELL_PROFILE_MARKER } from "../constants.js";
 
 interface StatusOptions {
   configPath?: string;
@@ -61,12 +65,30 @@ export async function statusAction(options: StatusOptions = {}): Promise<void> {
 
   console.log(chalk.green("[features] runtime_metrics = true is set."));
 
-  const otelValues = extractOtelValues(toml);
+  if (hasDisabledExporter(toml)) {
+    console.log(
+      chalk.green(
+        'Live export is off by choice (exporter = "none") — no tool arguments or tool output leave this machine.',
+      ),
+    );
+    console.log(chalk.dim("Import usage with `revenium-codex backfill`."));
+  }
+
+  if (await isProfileConfigured(SHELL_PROFILE_MARKER, WRAPPER_COMMAND)) {
+    console.log(chalk.green("Codex wrapper is installed in the shell profile."));
+  } else {
+    console.log(chalk.yellow("Codex wrapper is not installed in the shell profile."));
+    console.log(
+      chalk.dim(
+        "Organization and product reach live sessions only through it. Run: revenium-codex setup",
+      ),
+    );
+  }
+
+  const otelValues = await resolveOtelCredentials(toml, options.configPath);
   if (!otelValues) {
     console.log(
-      chalk.yellow(
-        "Could not extract endpoint and api_key from [otel] block — skipping connection check.",
-      ),
+      chalk.yellow("Could not extract endpoint and api_key — skipping connection check."),
     );
     return;
   }

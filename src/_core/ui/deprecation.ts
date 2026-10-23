@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-const SYNC_REMOVAL_VERSION = "2.0.0";
+const SYNC_REMOVAL_VERSION = "3.0.0";
 
 export interface SyncDeprecationNotice {
   command: string;

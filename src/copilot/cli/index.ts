@@ -7,6 +7,7 @@ import { testCommand } from "../commands/test.js";
 import { syncCommand } from "../commands/sync.js";
 import { resetCommand } from "../commands/reset.js";
 import { backfillCommand } from "../commands/backfill.js";
+import { installEnvProxyDispatcher } from "../../_core/net/proxy.js";
 import pkg from "../../../package.json";
 
 export const program = new Command();
@@ -19,8 +20,8 @@ program
 program
   .command("setup")
   .description("Interactive setup wizard to configure GitHub Copilot metering")
-  .option("-k, --api-key <key>", "Revenium API key (hak_... or rev_...)")
-  .option("-e, --email <email>", "Email for usage attribution")
+  .option("-k, --api-key <key>", "Revenium metering key rev_mk_... (recommended)")
+  .option("-e, --email <email>", "Admin contact email (usage is attributed per GitHub login)")
   .option("-o, --organization <name>", "Organization name for cost attribution")
   .option("-p, --product <name>", "Product name for cost attribution")
   .option("--endpoint <url>", "Revenium API endpoint URL")
@@ -73,6 +74,10 @@ program
   .option("--from <date>", "Start date for sync range (YYYY-MM-DD)")
   .option("--to <date>", "End date for sync range (YYYY-MM-DD)")
   .option("--dry-run", "Output OTLP JSON without sending data")
+  .option(
+    "--allow-missing-billing",
+    "Import usage of days whose billing could not be read, at zero cost",
+  )
   .option("--github-token <token>", "GitHub personal access token (or set GITHUB_TOKEN)")
   .option("--github-org <org>", "GitHub organization slug (or set GITHUB_ORG)")
   .action(async (options) => {
@@ -81,6 +86,7 @@ program
       from: options.from,
       to: options.to,
       dryRun: options.dryRun,
+      allowMissingBilling: options.allowMissingBilling,
       githubToken: options.githubToken,
       githubOrg: options.githubOrg,
     });
@@ -101,7 +107,11 @@ program
   .option("--since <date>", "Start date (ISO 8601 or relative: 7d, 1m, 1y)")
   .option("--to <date>", "End date (ISO 8601, defaults to now)")
   .option("--dry-run", "Preview without sending data")
-  .option("--batch-size <size>", "Events per OTLP batch, max 100 (default: 10)", "10")
+  .option(
+    "--allow-missing-billing",
+    "Import usage of days whose billing could not be read, at zero cost",
+  )
+  .option("--batch-size <size>", "Records per OTLP batch, max 100 (default: 10)", "10")
   .option("--delay <ms>", "Minimum delay between batches in milliseconds (default: 0)", "0")
   .option("-v, --verbose", "Show detailed output")
   .option("--github-token <token>", "GitHub personal access token (or set GITHUB_TOKEN)")
@@ -127,6 +137,7 @@ program
       since: options.since,
       to: options.to,
       dryRun: options.dryRun,
+      allowMissingBilling: options.allowMissingBilling,
       batchSize,
       delay,
       verbose: options.verbose,
@@ -136,5 +147,5 @@ program
   });
 
 if (process.env.NODE_ENV !== "test") {
-  program.parse();
+  void installEnvProxyDispatcher().then(() => program.parse());
 }

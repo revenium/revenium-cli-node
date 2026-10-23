@@ -3,8 +3,43 @@ import type { CursorUsageEvent, CursorConfig } from "../../types.js";
 import { SERVICE_NAME, SCOPE_NAME } from "../../constants.js";
 import { computeEventHash } from "../sync/deduplicator.js";
 
+const MAX_REPRESENTABLE_EPOCH_MS = 8_640_000_000_000_000;
+
 export function isValidTimestamp(ts: unknown): ts is number {
-  return typeof ts === "number" && Number.isFinite(ts) && Number.isInteger(ts) && ts > 0;
+  return (
+    typeof ts === "number" && Number.isInteger(ts) && ts > 0 && ts <= MAX_REPRESENTABLE_EPOCH_MS
+  );
+}
+
+const INCLUDED_KIND_PREFIX = "included in";
+
+function isIncludedInPlan(kind: unknown): boolean {
+  return typeof kind === "string" && kind.trim().toLowerCase().startsWith(INCLUDED_KIND_PREFIX);
+}
+
+function cursorReportedCents(event: CursorUsageEvent): number | null {
+  if (typeof event.chargedCents === "number" && Number.isFinite(event.chargedCents)) {
+    return event.chargedCents;
+  }
+
+  return event.isChargeable === false ? 0 : null;
+}
+
+export function billableCents(event: CursorUsageEvent): number {
+  return (
+    cursorReportedCents(event) ??
+    (isIncludedInPlan(event.kind) ? 0 : (event.tokenUsage?.totalCents ?? 0))
+  );
+}
+
+function reportedChargeability(event: CursorUsageEvent): boolean | null {
+  const reportedCents = cursorReportedCents(event);
+
+  if (reportedCents !== null) {
+    return reportedCents > 0;
+  }
+
+  return isIncludedInPlan(event.kind) ? false : null;
 }
 
 function mapEventToLogRecord(
@@ -33,15 +68,19 @@ function mapEventToLogRecord(
       key: "cache_creation_tokens",
       value: { stringValue: String(event.tokenUsage?.cacheWriteTokens ?? 0) },
     },
-    {
-      key: "cost_usd",
-      value: {
-        stringValue: ((event.tokenUsage?.totalCents ?? 0) / 100).toFixed(6),
-      },
-    },
+    { key: "cost_usd", value: { stringValue: (billableCents(event) / 100).toFixed(6) } },
     { key: "user.email", value: { stringValue: event.userEmail } },
     { key: "billing.kind", value: { stringValue: event.kind } },
   ];
+
+  const chargeability = reportedChargeability(event);
+
+  if (chargeability !== null) {
+    attributes.push({
+      key: "billing.chargeable",
+      value: { stringValue: String(chargeability) },
+    });
+  }
 
   return {
     timeUnixNano,

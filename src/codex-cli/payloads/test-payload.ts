@@ -23,6 +23,7 @@ export function createCodexMapperTestPayload(sessionId: string): OTLPLogsPayload
                   { key: "input_token_count", value: { intValue: 0 } },
                   { key: "output_token_count", value: { intValue: 0 } },
                   { key: "cached_token_count", value: { intValue: 0 } },
+                  { key: "cache_write_token_count", value: { intValue: 0 } },
                   { key: "reasoning_token_count", value: { intValue: 0 } },
                   { key: "tool_token_count", value: { intValue: 0 } },
                   { key: "duration_ms", value: { intValue: 0 } },

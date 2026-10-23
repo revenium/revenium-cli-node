@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { sendOtlpLogs } from "../../src/_core/api/otlp-client.js";
 import { startupStagger } from "../../src/_core/api/resilience.js";
+import { MIN_REQUEST_INTERVAL_MS } from "../../src/_core/api/rate-limiter.js";
 import { createTestPayload, generateTestSessionId } from "../../src/_core/api/health-check.js";
 
 function createFailThenSucceedServer(
@@ -80,6 +82,73 @@ function createFailThenSucceedServer(
   };
 }
 
+function createResetThenSucceedServer(resetCount: number) {
+  let connectionCount = 0;
+  let server: NetServer;
+  let port = 0;
+
+  const successBody = JSON.stringify({
+    id: "reset-then-succeed",
+    resourceType: "logs",
+    processedEvents: 1,
+    created: "2026-10-19T00:00:00.000Z",
+  });
+
+  function handler(socket: Socket) {
+    connectionCount++;
+
+    if (connectionCount <= resetCount) {
+      socket.destroy();
+      return;
+    }
+
+    socket.on("data", () => {
+      socket.end(
+        `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(successBody)}\r\nConnection: close\r\n\r\n${successBody}`,
+      );
+    });
+  }
+
+  return {
+    get baseUrl() {
+      return `http://127.0.0.1:${port}`;
+    },
+    get connectionCount() {
+      return connectionCount;
+    },
+    start(): Promise<void> {
+      return new Promise((resolve, reject) => {
+        server = createNetServer(handler);
+        server.listen(0, "127.0.0.1", () => {
+          const addr = server.address();
+          if (addr && typeof addr === "object") port = addr.port;
+          resolve();
+        });
+        server.on("error", reject);
+      });
+    },
+    stop(): Promise<void> {
+      return new Promise((resolve) => {
+        if (!server) return resolve();
+        server.close(() => resolve());
+      });
+    },
+  };
+}
+
+async function findClosedPortUrl(): Promise<string> {
+  const probe = createNetServer();
+  const port = await new Promise<number>((resolve, reject) => {
+    probe.listen(0, "127.0.0.1", () => {
+      const addr = probe.address();
+      resolve(addr && typeof addr === "object" ? addr.port : 0);
+    });
+    probe.on("error", reject);
+  });
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return `http://127.0.0.1:${port}`;
+}
+
 describe("resilience integration", () => {
   const originalEnv = { ...process.env };
 
@@ -109,7 +178,7 @@ describe("resilience integration", () => {
       server.reset();
     });
 
-    it("retries on 503 and succeeds on third attempt with jittered delays", async () => {
+    it("retries on 503 and succeeds on third attempt, never twice within a second", async () => {
       const payload = createTestPayload(generateTestSessionId(), "test-resilience");
       const result = await sendOtlpLogs(server.baseUrl, "test-key", payload);
 
@@ -120,11 +189,14 @@ describe("resilience integration", () => {
       const delay1 = t1 - t0;
       const delay2 = t2 - t1;
 
-      expect(delay1).toBeGreaterThanOrEqual(0);
-      expect(delay1).toBeLessThan(800);
+      const schedulingSlackMs = 100;
+      const floor = MIN_REQUEST_INTERVAL_MS - schedulingSlackMs;
 
-      expect(delay2).toBeGreaterThanOrEqual(0);
-      expect(delay2).toBeLessThan(1200);
+      expect(delay1).toBeGreaterThanOrEqual(floor);
+      expect(delay1).toBeLessThan(MIN_REQUEST_INTERVAL_MS + 1000);
+
+      expect(delay2).toBeGreaterThanOrEqual(floor);
+      expect(delay2).toBeLessThan(MIN_REQUEST_INTERVAL_MS + 1000);
     });
   });
 
@@ -193,6 +265,54 @@ describe("resilience integration", () => {
       expect(s401.requestCount).toBe(1);
 
       await s401.stop();
+    });
+  });
+
+  describe("connection-level failure retry", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("retries a reset connection and succeeds on the third attempt", async () => {
+      const server = createResetThenSucceedServer(2);
+      await server.start();
+
+      try {
+        const payload = createTestPayload(generateTestSessionId(), "test-resilience");
+        const result = await sendOtlpLogs(server.baseUrl, "test-key", payload);
+
+        expect(result).toHaveProperty("id");
+        expect(server.connectionCount).toBe(3);
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("exhausts the retry budget on a refused connection and reports the cause", async () => {
+      process.env.REVENIUM_MAX_RETRIES = "2";
+      process.env.REVENIUM_BACKOFF_BASE_MS = "400";
+      vi.spyOn(Math, "random").mockReturnValue(1);
+
+      const url = await findClosedPortUrl();
+      const payload = createTestPayload(generateTestSessionId(), "test-resilience");
+      const start = Date.now();
+
+      await expect(sendOtlpLogs(url, "test-key", payload)).rejects.toThrow("ECONNREFUSED");
+      expect(Date.now() - start).toBeGreaterThanOrEqual(400);
+    });
+
+    it("stops at the configured attempt count when the connection keeps resetting", async () => {
+      process.env.REVENIUM_MAX_RETRIES = "2";
+      const server = createResetThenSucceedServer(999);
+      await server.start();
+
+      try {
+        const payload = createTestPayload(generateTestSessionId(), "test-resilience");
+        await expect(sendOtlpLogs(server.baseUrl, "test-key", payload)).rejects.toThrow();
+        expect(server.connectionCount).toBe(2);
+      } finally {
+        await server.stop();
+      }
     });
   });
 

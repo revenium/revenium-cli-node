@@ -4,6 +4,7 @@ import {
   isValidDay,
   generateTransactionId,
 } from "../../../src/copilot/core/transform/otlp-mapper.js";
+import { getFieldsForPlatform } from "../../../src/_core/schema/field-registry.js";
 import {
   createCopilotUsageDay,
   createCopilotBreakdown,
@@ -87,12 +88,64 @@ describe("buildOtlpPayload", () => {
     expect(getInt("copilot.usage.active_users")).toBe(8);
   });
 
-  it("includes user.email in span attributes when present", () => {
+  it("attributes each span to its own Copilot seat holder", () => {
+    const day = createCopilotUsageDay({
+      breakdown: [
+        createCopilotBreakdown({ user_login: "octocat" }),
+        createCopilotBreakdown({ user_login: "hubot" }),
+      ],
+    });
+    const payload = buildOtlpPayload([day], createCopilotConfig({ email: "admin@co.com" }));
+    const subscriberIds = payload.resourceSpans[0].scopeSpans[0].spans.map(
+      (span) => span.attributes.find((a) => a.key === "revenium.subscriber.id")?.value.stringValue,
+    );
+    expect(subscriberIds).toEqual(["octocat", "hubot"]);
+  });
+
+  it("omits the subscriber id when the breakdown has no usable user login", () => {
+    const day = createCopilotUsageDay({
+      breakdown: [createCopilotBreakdown({ user_login: "   " })],
+    });
+    const payload = buildOtlpPayload([day], createCopilotConfig());
+    const attrs = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes;
+    expect(attrs.find((a) => a.key === "revenium.subscriber.id")).toBeUndefined();
+    expect(attrs.find((a) => a.key === "gen_ai.conversation.id")?.value.stringValue).toContain(
+      "unknown",
+    );
+  });
+
+  it("names each developer when no admin email is configured", () => {
+    const day = createCopilotUsageDay({
+      breakdown: [
+        createCopilotBreakdown({ user_login: "octocat" }),
+        createCopilotBreakdown({ user_login: "hubot" }),
+      ],
+    });
+    const payload = buildOtlpPayload([day], createCopilotConfig());
+    const spans = payload.resourceSpans[0].scopeSpans[0].spans;
+    const subscriberIds = spans.map(
+      (span) => span.attributes.find((a) => a.key === "revenium.subscriber.id")?.value.stringValue,
+    );
+    expect(subscriberIds).toEqual(["octocat", "hubot"]);
+  });
+
+  it("registers the subscriber id for copilot with the emitted OTLP type", () => {
+    const payload = buildOtlpPayload([createCopilotUsageDay()], createCopilotConfig());
+    const attr = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes.find(
+      (a) => a.key === "revenium.subscriber.id",
+    );
+    const definition = getFieldsForPlatform("copilot", "log").find(
+      (field) => field.key === "revenium.subscriber.id",
+    );
+    expect(attr?.value.stringValue).toBe("testuser");
+    expect(definition?.type).toBe("stringValue");
+  });
+
+  it("never stamps the configured email on spans", () => {
     const config = createCopilotConfig({ email: "admin@co.com" });
     const payload = buildOtlpPayload([createCopilotUsageDay()], config);
     const attrs = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes;
-    const email = attrs.find((a) => a.key === "user.email");
-    expect(email?.value.stringValue).toBe("admin@co.com");
+    expect(attrs.find((a) => a.key === "user.email")).toBeUndefined();
   });
 
   it("includes organization.name in span attributes when present", () => {
@@ -103,11 +156,83 @@ describe("buildOtlpPayload", () => {
     expect(org?.value.stringValue).toBe("Acme");
   });
 
+  it("sends a punctuated organization.name verbatim, as the test command does", () => {
+    const config = createCopilotConfig({ organizationName: "Acme, Inc." });
+    const payload = buildOtlpPayload([createCopilotUsageDay()], config);
+    const attrs = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes;
+    const org = attrs.find((a) => a.key === "organization.name");
+    expect(org?.value.stringValue).toBe("Acme, Inc.");
+  });
+
   it("includes transaction_id in span attributes", () => {
     const payload = buildOtlpPayload([createCopilotUsageDay()], createCopilotConfig());
     const attrs = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes;
     const txId = attrs.find((a) => a.key === "transaction_id");
     expect(txId?.value.stringValue).toMatch(/^[a-f0-9]{32}$/);
+  });
+
+  it("keeps a chat span's transaction_id unchanged", () => {
+    const payload = buildOtlpPayload([createCopilotUsageDay()], createCopilotConfig());
+    const attrs = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes;
+
+    expect(attrs.find((a) => a.key === "transaction_id")?.value.stringValue).toBe(
+      "63de3ddc8aabbafd1fdd245360c50435",
+    );
+    expect(attrs.find((a) => a.key === "gen_ai.usage.input_tokens")?.value.intValue).toBe(0);
+    expect(attrs.find((a) => a.key === "copilot.usage.surface")).toBeUndefined();
+    expect(attrs.find((a) => a.key === "copilot.usage.ai_credits")).toBeUndefined();
+  });
+
+  it("emits GitHub's token counts and credits on surface spans", () => {
+    const day = createCopilotUsageDay({
+      breakdown: [
+        createCopilotBreakdown({ surface: "cli", input_tokens: 8800, output_tokens: 1200 }),
+        createCopilotBreakdown({ surface: "completion", ai_credits: 12.5 }),
+      ],
+    });
+    const spans = buildOtlpPayload([day], createCopilotConfig()).resourceSpans[0].scopeSpans[0]
+      .spans;
+
+    const cli = spans[0].attributes;
+    expect(cli.find((a) => a.key === "gen_ai.usage.input_tokens")?.value.intValue).toBe(8800);
+    expect(cli.find((a) => a.key === "gen_ai.usage.output_tokens")?.value.intValue).toBe(1200);
+    expect(cli.find((a) => a.key === "copilot.usage.surface")?.value.stringValue).toBe("cli");
+
+    const completion = spans[1].attributes;
+    expect(completion.find((a) => a.key === "copilot.usage.ai_credits")?.value.doubleValue).toBe(
+      12.5,
+    );
+  });
+
+  it("gives two surfaces of one developer distinct transaction ids", () => {
+    const day = createCopilotUsageDay({
+      breakdown: [
+        createCopilotBreakdown({ surface: "cli" }),
+        createCopilotBreakdown({ surface: "app" }),
+      ],
+    });
+    const spans = buildOtlpPayload([day], createCopilotConfig()).resourceSpans[0].scopeSpans[0]
+      .spans;
+
+    const transactionId = (index: number): string | undefined =>
+      spans[index].attributes.find((a) => a.key === "transaction_id")?.value.stringValue;
+
+    expect(transactionId(0)).not.toBe(transactionId(1));
+  });
+
+  it("keeps a surface transaction id stable when GitHub revises its token counts", () => {
+    const transactionId = (input_tokens: number, output_tokens: number): string | undefined => {
+      const day = createCopilotUsageDay({
+        breakdown: [createCopilotBreakdown({ surface: "cli", input_tokens, output_tokens })],
+      });
+      return buildOtlpPayload(
+        [day],
+        createCopilotConfig(),
+      ).resourceSpans[0].scopeSpans[0].spans[0].attributes.find((a) => a.key === "transaction_id")
+        ?.value.stringValue;
+    };
+
+    expect(transactionId(5000, 500)).toBe(transactionId(9000, 900));
   });
 
   it("generates valid traceId and spanId", () => {
@@ -165,25 +290,31 @@ describe("isValidDay", () => {
 
 describe("generateTransactionId", () => {
   it("returns a 32-character hex string", () => {
-    const id = generateTransactionId("conv-1", "123456", "copilot", 0, 0);
+    const id = generateTransactionId("conv-1", "123456", "copilot");
     expect(id).toMatch(/^[a-f0-9]{32}$/);
   });
 
   it("is deterministic", () => {
-    const id1 = generateTransactionId("conv-1", "123456", "copilot", 0, 0);
-    const id2 = generateTransactionId("conv-1", "123456", "copilot", 0, 0);
+    const id1 = generateTransactionId("conv-1", "123456", "copilot");
+    const id2 = generateTransactionId("conv-1", "123456", "copilot");
     expect(id1).toBe(id2);
   });
 
   it("differs for different conversation IDs", () => {
-    const id1 = generateTransactionId("conv-1", "123456", "copilot", 0, 0);
-    const id2 = generateTransactionId("conv-2", "123456", "copilot", 0, 0);
+    const id1 = generateTransactionId("conv-1", "123456", "copilot");
+    const id2 = generateTransactionId("conv-2", "123456", "copilot");
     expect(id1).not.toBe(id2);
   });
 
   it("differs for different timestamps", () => {
-    const id1 = generateTransactionId("conv-1", "123456", "copilot", 0, 0);
-    const id2 = generateTransactionId("conv-1", "789012", "copilot", 0, 0);
+    const id1 = generateTransactionId("conv-1", "123456", "copilot");
+    const id2 = generateTransactionId("conv-1", "789012", "copilot");
     expect(id1).not.toBe(id2);
+  });
+
+  it("keeps the identifier emitted by earlier versions so re-sent records stay deduplicated", () => {
+    expect(generateTransactionId("conv-1", "123456", "copilot")).toBe(
+      "f3b0bd0e86b64ded91b6b3104d54857f",
+    );
   });
 });

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { OTLP_PATH, MGMT_API_PATH_SUFFIX } from "../constants.js";
 
 export function parseEnvContent(content: string, isFish = false): Record<string, string> {
@@ -18,12 +19,17 @@ export function parseEnvContent(content: string, isFish = false): Record<string,
       const key = trimmed.substring(0, spaceIndex).trim();
       let value = trimmed.substring(spaceIndex + 1).trim();
 
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.substring(1, value.length - 1);
-        value = value.replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+      if (value.startsWith("'") && value.endsWith("'")) {
+        value = value
+          .substring(1, value.length - 1)
+          .replace(/\\'/g, "'")
+          .replace(/\\\\/g, "\\");
+      } else if (value.startsWith('"') && value.endsWith('"')) {
+        value = value
+          .substring(1, value.length - 1)
+          .replace(/\\"/g, '"')
+          .replace(/\\\$/g, "$")
+          .replace(/\\\\/g, "\\");
       }
 
       result[key] = value;
@@ -40,15 +46,12 @@ export function parseEnvContent(content: string, isFish = false): Record<string,
       const key = trimmed.substring(0, equalsIndex).trim();
       let value = trimmed.substring(equalsIndex + 1).trim();
 
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.substring(1, value.length - 1);
+      if (value.startsWith("'") && value.endsWith("'")) {
+        value = value.substring(1, value.length - 1).replace(/'\\''/g, "'");
+      } else if (value.startsWith('"') && value.endsWith('"')) {
         value = value
-          .replace(/'\\''/g, "'")
+          .substring(1, value.length - 1)
           .replace(/\\"/g, '"')
-          .replace(/\\'/g, "'")
           .replace(/\\\$/g, "$")
           .replace(/\\`/g, "`")
           .replace(/\\\\/g, "\\");
@@ -59,6 +62,24 @@ export function parseEnvContent(content: string, isFish = false): Record<string,
   }
 
   return result;
+}
+
+export function findUnknownKeys(content: string, knownKeys: readonly string[]): string[] {
+  const known = new Set(knownKeys);
+  return Object.keys(parseEnvContent(content))
+    .filter((key) => !known.has(key))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export async function readUnknownKeys(
+  configPath: string,
+  knownKeys: readonly string[],
+): Promise<string[]> {
+  try {
+    return findUnknownKeys(await readFile(configPath, "utf-8"), knownKeys);
+  } catch {
+    return [];
+  }
 }
 
 export function parseOtelResourceAttributes(value: string): Record<string, string> {
@@ -87,17 +108,29 @@ export function parseOtelResourceAttributes(value: string): Record<string, strin
   return result;
 }
 
+const OTLP_SIGNAL_SUFFIX = /\/v1\/(?:logs|traces|metrics)\/*$/i;
+const OTLP_REQUEST_SUFFIX =
+  /\/meter(?:\/v2(?:\/ai)?(?:\/otlp(?:\/v1\/(?:logs|traces|metrics))?)?)?\/*$/i;
+const OPAQUE_ORIGIN = "null";
+
 export function extractBaseEndpoint(fullEndpoint: string): string {
   try {
     const url = new URL(fullEndpoint);
-    const path = url.pathname;
-    if (path.includes("/meter/v2/otlp") || path.includes("/meter/v2/ai/otlp")) {
-      url.pathname = "";
+    if (url.origin === OPAQUE_ORIGIN) {
+      return fullEndpoint;
     }
-    return url.origin;
+    const prefix = url.pathname.replace(OTLP_REQUEST_SUFFIX, "");
+    return `${url.origin}${prefix}`.replace(/\/+$/, "");
   } catch {
     return fullEndpoint;
   }
+}
+
+// Codex stores the full OTLP request URL, including legacy variants that carry only the signal
+// path, so a bare `/v1/logs` tail is a suffix there — unlike in a saved base, where it can be a
+// gateway path prefix.
+export function extractBaseFromOtlpRequestUrl(requestUrl: string): string {
+  return extractBaseEndpoint(requestUrl.replace(OTLP_SIGNAL_SUFFIX, ""));
 }
 
 export function getFullOtlpEndpoint(baseUrl: string): string {
@@ -105,11 +138,12 @@ export function getFullOtlpEndpoint(baseUrl: string): string {
   return `${cleanUrl}${OTLP_PATH}`;
 }
 
-// Management-plane API base (session attribution, etc.) — distinct from the OTLP ingest origin.
-// An explicit override always wins; otherwise defaults to `${otlpOrigin}/profitstream`.
-export function getManagementEndpoint(otlpOrigin: string, override?: string): string {
+// Management-plane API base (session attribution, etc.) — distinct from the OTLP ingest path.
+// The input is the configured base endpoint, gateway path prefix included; an explicit override
+// always wins, otherwise the default is `${otlpBaseEndpoint}/profitstream`.
+export function getManagementEndpoint(otlpBaseEndpoint: string, override?: string): string {
   if (override && override.trim()) {
     return override.trim().replace(/\/+$/, "");
   }
-  return `${otlpOrigin.replace(/\/+$/, "")}${MGMT_API_PATH_SUFFIX}`;
+  return `${otlpBaseEndpoint.replace(/\/+$/, "")}${MGMT_API_PATH_SUFFIX}`;
 }

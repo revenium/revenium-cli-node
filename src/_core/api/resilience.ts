@@ -48,7 +48,8 @@ export function getBackoffMaxMs(): number {
 export function jitteredBackoff(attempt: number, baseMs?: number): number {
   const base = baseMs ?? getBackoffBaseMs();
   const maxMs = getBackoffMaxMs();
-  return Math.min(base * Math.pow(2, attempt) * Math.random(), maxMs);
+  const ceiling = base * Math.pow(2, attempt);
+  return Math.min(ceiling * (0.5 + Math.random() / 2), maxMs);
 }
 
 export async function startupStagger(maxMs?: number): Promise<void> {
@@ -78,17 +79,7 @@ export function isNonRetryable4xx(status: number): boolean {
   return status >= 400 && status < 500 && !isRetryableStatusCode(status);
 }
 
-export function isRetryableNetworkError(error: Error): boolean {
-  return (
-    error.message.includes("ECONNRESET") ||
-    error.message.includes("ETIMEDOUT") ||
-    error.message.includes("ENOTFOUND") ||
-    error.message.includes("network") ||
-    error.message.includes("timeout")
-  );
-}
-
-export function parseRetryAfterMs(response: Response): number | null {
+function parseRetryAfterMs(response: Response): number | null {
   const header = response.headers.get("retry-after");
   if (!header) return null;
 
@@ -104,6 +95,17 @@ export function parseRetryAfterMs(response: Response): number | null {
   }
 
   return null;
+}
+
+export function retryDelayMs(response: Response, attempt: number): number {
+  const backoff = jitteredBackoff(attempt);
+  const retryAfterMs = parseRetryAfterMs(response);
+
+  if (retryAfterMs === null) {
+    return backoff;
+  }
+
+  return Math.max(retryAfterMs, backoff);
 }
 
 export function sanitizeErrorMessage(message: string, secret: string): string {

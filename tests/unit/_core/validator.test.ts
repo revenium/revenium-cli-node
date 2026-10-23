@@ -14,7 +14,7 @@ describe("validateApiKey", () => {
 
   it("accepts valid rev_mk_ key", () => {
     const result = validateApiKey(
-      "rev_mk_3By1Ra6_a67381718cc44dc5748badea5e8ee5b64842c656427df65e538da31ddf13dc62",
+      "rev_mk_TENANT1_deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     );
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
@@ -22,10 +22,26 @@ describe("validateApiKey", () => {
 
   it("accepts valid rev_sk_ key", () => {
     const result = validateApiKey(
-      "rev_sk_3By1Ra6_aaca4fbe6b09877bcbe186f52e477537bfb1d42e5456b9548c84dffe3aa7d62a",
+      "rev_sk_tenant_0000000000000000000000000000000000000000000000000000000000000000",
     );
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("rejects a rev_rk_ read key and points at the metering key", () => {
+    const result = validateApiKey(
+      "rev_rk_tenant_0000000000000000000000000000000000000000000000000000000000000000",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining("rev_mk_")]));
+  });
+
+  it("rejects a rev_ key whose scope segment is not a known one", () => {
+    const result = validateApiKey(
+      "rev_zz_tenant_0000000000000000000000000000000000000000000000000000000000000000",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toContain("rev_mk_");
   });
 
   it("rejects empty key", () => {
