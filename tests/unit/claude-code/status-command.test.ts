@@ -27,6 +27,7 @@ vi.mock("../../../src/_core/api/health-check.js", () => ({
 
 import { statusCommand } from "../../../src/claude-code/commands/status.js";
 import { loadConfig } from "../../../src/claude-code/config/loader.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
 
 const CONFIG: ClaudeCodeConfig = {
   apiKey: "hak_tenant_abc123xyz",
@@ -139,6 +140,13 @@ describe("claude-code statusCommand on a Claude Code configuration", () => {
     expect(output).toContain("Telemetry is enabled for Claude Code");
     expect(output).toContain("Skill attribution:");
     expect(output).not.toContain("written by the Cursor setup");
+  });
+
+  it("never prints the full API key", async () => {
+    await statusCommand();
+
+    expect(output).not.toContain(CONFIG.apiKey);
+    expect(output).toContain(maskApiKey(CONFIG.apiKey));
   });
 
   it("still repairs the telemetry settings with --fix", async () => {

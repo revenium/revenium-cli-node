@@ -29,6 +29,7 @@ import { setupCommand } from "../../../src/copilot/commands/setup.js";
 import { writeConfig } from "../../../src/copilot/config/writer.js";
 import { findUnknownConfigKeys } from "../../../src/copilot/config/loader.js";
 import { checkEndpointHealth } from "../../../src/_core/api/health-check.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
 import inquirer from "inquirer";
 import { stubTty, restoreTty } from "../../helpers/tty.js";
 
@@ -154,6 +155,20 @@ describe("copilot setupCommand key scope", () => {
     });
 
     expect(logged.join("\n")).not.toContain("write key");
+  });
+
+  it("never prints the full Revenium key", async () => {
+    const reveniumApiKey = "rev_mk_TENANT1_0123456789abcdef";
+
+    await setupCommand({
+      reveniumApiKey,
+      endpoint: "https://api.revenium.ai",
+      subscriptionTier: "business",
+    });
+
+    const output = logged.join("\n");
+    expect(output).not.toContain(reveniumApiKey);
+    expect(output).toContain(maskApiKey(reveniumApiKey));
   });
 
   it("stops a malformed legacy key supplied as a flag", async () => {

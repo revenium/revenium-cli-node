@@ -23,6 +23,8 @@ import type { BillingReport, CopilotConfig, SyncResult } from "../types.js";
 const ALLOW_MISSING_BILLING_HINT =
   "Pass --allow-missing-billing to import their usage at zero cost instead.";
 
+const DRY_RUN_NOTICE = "Running in dry-run mode - no data will be sent\n";
+
 const BILLING_REMEDY = `The sync window is held at those days, so they are imported on the first run whose token can read billing. ${ALLOW_MISSING_BILLING_HINT}`;
 
 function earliestUnavailableDay(report: BillingReport): string | undefined {
@@ -76,6 +78,15 @@ function formatResult(result: SyncResult): string {
     parts.push(`errors=${result.errors}`);
   }
   return parts.join(", ");
+}
+
+function printDryRunPayloads(payloads?: object[]): void {
+  if (!payloads || payloads.length === 0) return;
+
+  console.log("\n" + chalk.dim("OTLP payload(s):"));
+  for (const payload of payloads) {
+    console.log(chalk.dim(JSON.stringify(payload, null, 2)));
+  }
 }
 
 export async function syncCommand(options: SyncOptions = {}): Promise<void> {
@@ -142,7 +153,7 @@ async function runOnceMode(
   console.log(chalk.bold("\nRevenium GitHub Copilot Sync\n"));
 
   if (options.dryRun) {
-    console.log(chalk.yellow("Running in dry-run mode - no data will be sent\n"));
+    console.log(chalk.yellow(DRY_RUN_NOTICE));
   }
 
   const fromDate = options.from || undefined;
@@ -182,12 +193,7 @@ async function runOnceMode(
 
     printBillingReport(billingReport, billingRemedy(billingReport, fromDate));
 
-    if (options.dryRun && dryRunPayloads && dryRunPayloads.length > 0) {
-      console.log("\n" + chalk.dim("OTLP payload(s):"));
-      for (const payload of dryRunPayloads) {
-        console.log(chalk.dim(JSON.stringify(payload, null, 2)));
-      }
-    }
+    printDryRunPayloads(dryRunPayloads);
 
     if (result.errors > 0) {
       console.log(
@@ -226,7 +232,14 @@ async function runWatchMode(
     ),
   );
 
-  const watcher = new SyncWatcher(config, githubCredential, options.allowMissingBilling);
+  if (options.dryRun) {
+    console.log(chalk.yellow(DRY_RUN_NOTICE));
+  }
+
+  const watcher = new SyncWatcher(config, githubCredential, {
+    allowMissingBilling: options.allowMissingBilling,
+    dryRun: options.dryRun,
+  });
   let stopping = false;
   let withheldRecordsDuringRun = false;
   let organizationUnreachable = false;
@@ -247,7 +260,7 @@ async function runWatchMode(
 
   const reportBilling = (timestamp: string, billingReport: BillingReport) => {
     const withheldRecords = countWithheldRecords(billingReport);
-    withheldRecordsDuringRun = withheldRecordsDuringRun || withheldRecords > 0;
+    withheldRecordsDuringRun = withheldRecordsDuringRun || (!options.dryRun && withheldRecords > 0);
 
     if (withheldRecords > 0) {
       console.log(
@@ -261,7 +274,7 @@ async function runWatchMode(
   };
 
   await watcher.start(
-    (result, billingReport) => {
+    (result, billingReport, dryRunPayloads) => {
       const timestamp = new Date().toISOString().substring(11, 19);
       if (result.sent > 0 || result.fetched > 0) {
         console.log(chalk.dim(`[${timestamp}]`) + ` ${formatResult(result)}`);
@@ -269,6 +282,7 @@ async function runWatchMode(
         console.log(chalk.dim(`[${timestamp}] no new events`));
       }
       reportBilling(timestamp, billingReport);
+      printDryRunPayloads(dryRunPayloads);
     },
     (error, billingReport) => {
       const timestamp = new Date().toISOString().substring(11, 19);

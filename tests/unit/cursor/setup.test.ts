@@ -33,6 +33,7 @@ import { setupCommand } from "../../../src/cursor/commands/setup.js";
 import { writeConfig } from "../../../src/cursor/config/writer.js";
 import { testConnectivity } from "../../../src/cursor/core/cursor-client.js";
 import { checkEndpointHealth } from "../../../src/_core/api/health-check.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
 import inquirer from "inquirer";
 import { stubTty, restoreTty } from "../../helpers/tty.js";
 
@@ -85,6 +86,18 @@ describe("cursor setupCommand key scope", () => {
     await setupCommand({ ...options, reveniumApiKey: "rev_mk_TENANT1_0123456789abcdef" });
 
     expect(logged.join("\n")).not.toContain("write key");
+  });
+
+  it("never prints the full Cursor or Revenium key", async () => {
+    const reveniumApiKey = "rev_mk_TENANT1_0123456789abcdef";
+
+    await setupCommand({ ...options, reveniumApiKey });
+
+    const output = logged.join("\n");
+    for (const key of [options.cursorApiKey, reveniumApiKey]) {
+      expect(output).not.toContain(key);
+      expect(output).toContain(maskApiKey(key));
+    }
   });
 
   it("stops a malformed legacy key supplied as a flag", async () => {

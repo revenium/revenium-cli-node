@@ -36,6 +36,7 @@ import {
   parseTurnContext,
   parseTurnContextModel,
   parseTokenCountEvent,
+  parseTokenUsageRecord,
   hashTransactionId,
   deduplicateCodexEvents,
   parseDateInput,
@@ -221,6 +222,82 @@ describe("parseTurnContextModel (Codex CLI v0.128.0)", () => {
   it("returns null for other event types", () => {
     expect(
       parseTurnContextModel(JSON.stringify({ type: "session_meta", payload: { id: "x" } })),
+    ).toBeNull();
+  });
+});
+
+describe("parseTokenUsageRecord (Codex CLI v0.153.0)", () => {
+  it("maps a real token_usage_record line to the response's usage and time", () => {
+    const line = JSON.stringify({
+      timestamp: "2026-10-20T14:03:11.482Z",
+      type: "token_usage_record",
+      payload: {
+        thread_id: "019a2c6e-5f3b-7c1d-9e4a-2b8f6d1c0a77",
+        turn_id: "019a2c6f-1234-7abc-8def-0123456789ab",
+        session_id: "019a2c6e-5f3b-7c1d-9e4a-2b8f6d1c0a77",
+        root_turn_id: "019a2c6f-1234-7abc-8def-0123456789ab",
+        response_id: "resp_0a1b2c3d4e5f",
+        usage: {
+          input_tokens: 17774,
+          cached_input_tokens: 12672,
+          cache_write_input_tokens: 0,
+          output_tokens: 352,
+          reasoning_output_tokens: 56,
+          total_tokens: 18126,
+        },
+        turn_token_usage: {
+          input_tokens: 17774,
+          cached_input_tokens: 12672,
+          cache_write_input_tokens: 0,
+          output_tokens: 352,
+          reasoning_output_tokens: 56,
+          total_tokens: 18126,
+        },
+        thread_token_usage: {
+          input_tokens: 30894,
+          cached_input_tokens: 17664,
+          cache_write_input_tokens: 0,
+          output_tokens: 868,
+          reasoning_output_tokens: 209,
+          total_tokens: 31762,
+        },
+      },
+    });
+
+    expect(parseTokenUsageRecord(line)).toEqual({
+      usageKey: "17774|352|12672|56|18126",
+      timestampNanos: (
+        BigInt(Date.parse("2026-10-20T14:03:11.482Z")) * BigInt(1_000_000)
+      ).toString(),
+    });
+  });
+
+  it("returns null for any other rollout line", () => {
+    expect(
+      parseTokenUsageRecord(
+        JSON.stringify({
+          timestamp: "2026-10-20T14:03:11.482Z",
+          type: "turn_context",
+          payload: {},
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when the record carries no usage or no timestamp", () => {
+    expect(
+      parseTokenUsageRecord(
+        JSON.stringify({
+          timestamp: "2026-10-20T14:03:11.482Z",
+          type: "token_usage_record",
+          payload: {},
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseTokenUsageRecord(
+        JSON.stringify({ type: "token_usage_record", payload: { usage: { input_tokens: 1 } } }),
+      ),
     ).toBeNull();
   });
 });
@@ -827,7 +904,34 @@ describe("backfillAction — date filtering and dry-run", () => {
     });
   }
 
+  type Usage = {
+    input_tokens: number;
+    cached_input_tokens: number;
+    output_tokens: number;
+    reasoning_output_tokens: number;
+    total_tokens: number;
+  };
+
   function makeTokenCountLine(
+    timestampMs: number,
+    usage: Usage,
+    totalUsage: Usage = usage,
+  ): string {
+    return JSON.stringify({
+      timestamp: new Date(timestampMs).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: usage,
+          total_token_usage: totalUsage,
+          model_context_window: 272000,
+        },
+      },
+    });
+  }
+
+  function makeTokenUsageRecordLine(
     timestampMs: number,
     usage: {
       input_tokens: number;
@@ -839,17 +943,194 @@ describe("backfillAction — date filtering and dry-run", () => {
   ): string {
     return JSON.stringify({
       timestamp: new Date(timestampMs).toISOString(),
-      type: "event_msg",
+      type: "token_usage_record",
       payload: {
-        type: "token_count",
-        info: {
-          last_token_usage: usage,
-          total_token_usage: usage,
-          model_context_window: 272000,
-        },
+        thread_id: "019a2c6e-5f3b-7c1d-9e4a-2b8f6d1c0a77",
+        turn_id: "t1",
+        session_id: "019a2c6e-5f3b-7c1d-9e4a-2b8f6d1c0a77",
+        root_turn_id: "t1",
+        response_id: "resp_0a1b2c3d4e5f",
+        usage: { ...usage, cache_write_input_tokens: 0 },
+        turn_token_usage: usage,
+        thread_token_usage: usage,
       },
     });
   }
+
+  const sessionUsage = {
+    input_tokens: 100,
+    cached_input_tokens: 10,
+    output_tokens: 50,
+    reasoning_output_tokens: 5,
+    total_tokens: 165,
+  };
+
+  it("stamps a call at the moment its response completed, not when its tools finished", async () => {
+    const responseCompleted = Date.now() - 24 * 60 * 60 * 1000;
+    const toolsFinished = responseCompleted + 7 * 60 * 1000;
+    const [sessionMeta, turnContext] = makeRolloutBody(responseCompleted, "stamped-session").split(
+      "\n",
+    );
+    writeRollouts([
+      [
+        sessionMeta,
+        turnContext,
+        makeTokenUsageRecordLine(responseCompleted, sessionUsage),
+        makeTokenCountLine(toolsFinished, sessionUsage),
+      ].join("\n"),
+    ]);
+
+    await backfillAction({ since: "30d", dryRun: false, sessionsPath: tempSessionsDir });
+
+    const records = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2].resourceLogs[0].scopeLogs[0]
+      .logRecords;
+    expect(records).toHaveLength(1);
+    const expectedNanos = (BigInt(responseCompleted) * BigInt(1_000_000)).toString();
+    expect(records[0].timeUnixNano).toBe(expectedNanos);
+    expect(records[0].observedTimeUnixNano).toBe(expectedNanos);
+  });
+
+  it("keeps the transaction_id a call had before the response stamp was read", async () => {
+    const responseCompleted = Date.now() - 24 * 60 * 60 * 1000;
+    const [sessionMeta, turnContext, tokenCount] = makeRolloutBody(
+      responseCompleted + 7 * 60 * 1000,
+      "stable-id-session",
+    ).split("\n");
+    writeRollouts([
+      [
+        sessionMeta,
+        turnContext,
+        makeTokenUsageRecordLine(responseCompleted, sessionUsage),
+        tokenCount,
+      ].join("\n"),
+    ]);
+
+    await backfillAction({ since: "30d", dryRun: false, sessionsPath: tempSessionsDir });
+
+    const record = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2].resourceLogs[0].scopeLogs[0]
+      .logRecords[0];
+    const sentId = record.attributes.find((a) => a.key === "transaction_id")?.value.stringValue;
+    const idWithoutStamp = hashTransactionId({
+      sessionId: "stable-id-session",
+      serviceName: "codex_cli_rs",
+      projectPath: "unknown",
+      resolvedTimestampNanos: "0",
+      model: "gpt-5.3-codex",
+      inputs: 100,
+      outputs: 50,
+      cached: 10,
+      cacheWrite: 0,
+      reasoning: 5,
+      totalTokens: 165,
+      callKey:
+        "codex-call|codex_cli_rs|stable-id-session|gpt-5.3-codex|100|50|10|5|165|100|50|10|5|165",
+    });
+    expect(sentId).toBe(idWithoutStamp);
+  });
+
+  it("keeps a repeated token_count on the response time, so it cannot enter a window the call is outside of", async () => {
+    const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    const responseCompleted = since.getTime() - 60 * 60 * 1000;
+    const toolsFinished = since.getTime() + 60 * 60 * 1000;
+    const [sessionMeta, turnContext] = makeRolloutBody(responseCompleted, "boundary-session").split(
+      "\n",
+    );
+    writeRollouts([
+      [
+        sessionMeta,
+        turnContext,
+        makeTokenUsageRecordLine(responseCompleted, sessionUsage),
+        makeTokenCountLine(toolsFinished, sessionUsage),
+        makeTokenCountLine(toolsFinished + 1_000, sessionUsage),
+      ].join("\n"),
+    ]);
+
+    await backfillAction({
+      since: since.toISOString(),
+      dryRun: false,
+      sessionsPath: tempSessionsDir,
+    });
+
+    expect(otlpClient.sendOtlpLogs).not.toHaveBeenCalled();
+  });
+
+  it("gives two calls with identical counts their own response times, oldest first", async () => {
+    const firstCompleted = Date.now() - 24 * 60 * 60 * 1000;
+    const secondCompleted = firstCompleted + 60 * 1000;
+    const toolsFinished = secondCompleted + 10 * 60 * 1000;
+    const cumulativeAfterSecond = { ...sessionUsage, input_tokens: 200, total_tokens: 330 };
+    const [sessionMeta, turnContext] = makeRolloutBody(firstCompleted, "twin-counts-session").split(
+      "\n",
+    );
+    writeRollouts([
+      [
+        sessionMeta,
+        turnContext,
+        makeTokenUsageRecordLine(firstCompleted, sessionUsage),
+        makeTokenUsageRecordLine(secondCompleted, sessionUsage),
+        makeTokenCountLine(toolsFinished, sessionUsage),
+        makeTokenCountLine(toolsFinished + 1_000, sessionUsage, cumulativeAfterSecond),
+      ].join("\n"),
+    ]);
+
+    await backfillAction({ since: "30d", dryRun: false, sessionsPath: tempSessionsDir });
+
+    const records = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2].resourceLogs[0].scopeLogs[0]
+      .logRecords;
+    expect(records.map((r) => r.timeUnixNano)).toEqual([
+      (BigInt(firstCompleted) * BigInt(1_000_000)).toString(),
+      (BigInt(secondCompleted) * BigInt(1_000_000)).toString(),
+    ]);
+  });
+
+  it("points out rollouts written before Codex 0.153.0, which carry no response time", async () => {
+    const now = Date.now() - 24 * 60 * 60 * 1000;
+    writeRollouts([makeRolloutBody(now, "pre-0153-session")]);
+
+    await backfillAction({ since: "30d", dryRun: true, sessionsPath: tempSessionsDir });
+
+    const printed = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(printed).toContain("1 rollout file(s) were written by Codex before 0.153.0");
+  });
+
+  it("says nothing about response time for a rollout that carries it", async () => {
+    const now = Date.now() - 24 * 60 * 60 * 1000;
+    const [sessionMeta, turnContext, tokenCount] = makeRolloutBody(now, "post-0153-session").split(
+      "\n",
+    );
+    writeRollouts([
+      [sessionMeta, turnContext, makeTokenUsageRecordLine(now, sessionUsage), tokenCount].join(
+        "\n",
+      ),
+    ]);
+
+    await backfillAction({ since: "30d", dryRun: true, sessionsPath: tempSessionsDir });
+
+    const printed = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(printed).not.toContain("before 0.153.0");
+  });
+
+  it("ignores a usage record whose counts are not the call's own", async () => {
+    const otherResponse = Date.now() - 24 * 60 * 60 * 1000;
+    const toolsFinished = otherResponse + 7 * 60 * 1000;
+    const [sessionMeta, turnContext] = makeRolloutBody(otherResponse, "other-usage-session").split(
+      "\n",
+    );
+    writeRollouts([
+      [
+        sessionMeta,
+        turnContext,
+        makeTokenUsageRecordLine(otherResponse, { ...sessionUsage, output_tokens: 51 }),
+        makeTokenCountLine(toolsFinished, sessionUsage),
+      ].join("\n"),
+    ]);
+
+    await backfillAction({ since: "30d", dryRun: false, sessionsPath: tempSessionsDir });
+
+    const record = vi.mocked(otlpClient.sendOtlpLogs).mock.calls[0][2].resourceLogs[0].scopeLogs[0]
+      .logRecords[0];
+    expect(record.timeUnixNano).toBe((BigInt(toolsFinished) * BigInt(1_000_000)).toString());
+  });
 
   it("filters events outside the [since, to] window", async () => {
     const now = Date.now();
@@ -1665,7 +1946,7 @@ describe("backfillAction — date filtering and dry-run", () => {
     expect(printed).not.toContain("does not add rows");
   });
 
-  it("warns that calls already exported live are imported a second time", async () => {
+  it("tells the user a call already exported live is kept as one record", async () => {
     const now = Date.now();
 
     writeRollouts([makeCompletedEvent(now - 24 * 60 * 60 * 1000, "overlap-session")]);
@@ -1673,10 +1954,12 @@ describe("backfillAction — date filtering and dry-run", () => {
     await backfillAction({ since: "30d", dryRun: true, sessionsPath: tempSessionsDir });
 
     const printed = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(printed).toContain("imported again as a second record");
+    expect(printed).toContain("recognised as the same call and kept as one record");
+    expect(printed).not.toContain("imported again as a second record");
+    expect(printed).not.toContain("counting them twice");
   });
 
-  it("warns about the live overlap before reading any rollout, even when the window is empty", async () => {
+  it("explains the live overlap before reading any rollout, even when the window is empty", async () => {
     const now = Date.now();
 
     writeRollouts([makeCompletedEvent(now - 365 * 24 * 60 * 60 * 1000, "ancient-session")]);
@@ -1685,7 +1968,7 @@ describe("backfillAction — date filtering and dry-run", () => {
 
     const logSpy = vi.mocked(console.log);
     const warningIndex = logSpy.mock.calls.findIndex((call) =>
-      call.join(" ").includes("imported again as a second record"),
+      call.join(" ").includes("recognised as the same call and kept as one record"),
     );
     expect(warningIndex).toBeGreaterThanOrEqual(0);
     expect(otlpClient.sendOtlpLogs).not.toHaveBeenCalled();
@@ -1697,7 +1980,7 @@ describe("backfillAction — date filtering and dry-run", () => {
     );
   });
 
-  it("still warns about past live export when the exporter is off today", async () => {
+  it("still covers past live export when the exporter is off today", async () => {
     const now = Date.now();
     vi.mocked(loaderModule.readCodexToml).mockResolvedValueOnce(
       ["[otel]", 'exporter = "none"', 'metrics_exporter = "none"', ""].join("\n"),
@@ -1709,7 +1992,7 @@ describe("backfillAction — date filtering and dry-run", () => {
 
     const printed = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(printed).toContain("Live export is off in the current config");
-    expect(printed).toContain("imported again as a second record");
+    expect(printed).toContain("recognised as the same call and kept as one record");
     expect(printed).not.toContain("Codex exports usage to Revenium as calls happen");
   });
 

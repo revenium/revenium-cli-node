@@ -31,9 +31,12 @@ vi.mock("../../../src/_core/api/health-check.js", () => ({
 
 import { statusCommand } from "../../../src/copilot/commands/status.js";
 import { loadConfig } from "../../../src/copilot/config/loader.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
+
+const GITHUB_TOKEN = "ghp_0123456789abcdef0123";
 
 const CONFIG: CopilotConfig = {
-  githubToken: "ghp_token",
+  githubToken: GITHUB_TOKEN,
   githubOrg: "acme",
   reveniumApiKey: "hak_tenant_abc123xyz",
   reveniumEndpoint: "https://api.revenium.ai",
@@ -58,6 +61,17 @@ describe("copilot statusCommand connectivity", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
+  });
+
+  it("never prints the full Revenium key or GitHub token", async () => {
+    mocks.checkCopilotAccess.mockResolvedValue({ status: "connected" });
+
+    await statusCommand();
+
+    for (const secret of [CONFIG.reveniumApiKey, GITHUB_TOKEN]) {
+      expect(output).not.toContain(secret);
+      expect(output).toContain(maskApiKey(secret));
+    }
   });
 
   it("reports connected when the organization and its metrics both answer", async () => {

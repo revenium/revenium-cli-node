@@ -24,6 +24,7 @@ import { writeConfig } from "../../../src/gemini-cli/config/writer.js";
 import { updateShellProfile } from "../../../src/_core/shell/profile-updater.js";
 import inquirer from "inquirer";
 import { stubTty, restoreTty } from "../../helpers/tty.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
 
 const options = {
   apiKey: "hak_tenant_testkey123",
@@ -285,6 +286,14 @@ describe("setupCommand key scope", () => {
     await setupCommand({ ...options, apiKey: "rev_mk_TENANT1_0123456789abcdef" });
 
     expect(logged.join("\n")).not.toContain("write key");
+  });
+
+  it("never prints the full API key", async () => {
+    await setupCommand(options);
+
+    const output = logged.join("\n");
+    expect(output).not.toContain(options.apiKey);
+    expect(output).toContain(maskApiKey(options.apiKey));
   });
 
   it("stops a malformed legacy key supplied as a flag", async () => {
