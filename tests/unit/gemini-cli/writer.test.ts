@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const homeState = { dir: "" };
 
@@ -10,10 +10,15 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => homeState.dir || actual.homedir() };
 });
 
-import { generateEnvContent, writeConfig } from "../../../src/gemini-cli/config/writer.js";
+import {
+  generateEnvContent,
+  getConfigFilePath,
+  writeConfig,
+} from "../../../src/gemini-cli/config/writer.js";
 import { buildGeminiEnv } from "../../../src/gemini-cli/config/env.js";
 import { parseEnvContent } from "../../../src/_core/config/loader.js";
 import { checkEndpointHealth } from "../../../src/_core/api/health-check.js";
+import { CONFIG_FILE_MODE } from "../../../src/_core/constants.js";
 import type { GeminiCliConfig } from "../../../src/gemini-cli/config/loader.js";
 
 const config: GeminiCliConfig = {
@@ -82,6 +87,17 @@ describe("writeConfig", () => {
 
     expect(envPath).toBe(join(homeState.dir, ".gemini", "revenium.env"));
     expect(await readdir(join(homeState.dir, ".gemini"))).toEqual(["revenium.env"]);
+  });
+
+  it("restricts a revenium.env an earlier release left readable to the owner", async () => {
+    const envPath = getConfigFilePath();
+    await mkdir(dirname(envPath), { recursive: true });
+    await writeFile(envPath, "");
+    await chmod(envPath, 0o644);
+
+    await writeConfig(config);
+
+    expect((await stat(envPath)).mode & 0o777).toBe(CONFIG_FILE_MODE);
   });
 });
 

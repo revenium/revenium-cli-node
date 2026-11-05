@@ -236,6 +236,11 @@ async function sendBatch(
     : { success: false, sent: 0, error: error ?? "Unknown error" };
 }
 
+export interface SyncWatcherOptions {
+  allowMissingBilling?: boolean;
+  dryRun?: boolean;
+}
+
 export class SyncWatcher {
   private running = false;
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -244,11 +249,11 @@ export class SyncWatcher {
   constructor(
     private config: CopilotConfig,
     private githubCredential: GithubCredential,
-    private allowMissingBilling = false,
+    private options: SyncWatcherOptions = {},
   ) {}
 
   async start(
-    onCycle?: (result: SyncResult, billingReport: BillingReport) => void,
+    onCycle?: (result: SyncResult, billingReport: BillingReport, dryRunPayloads?: object[]) => void,
     onError?: (error: Error, billingReport: BillingReport) => void,
   ): Promise<void> {
     this.running = true;
@@ -258,11 +263,12 @@ export class SyncWatcher {
       const billingReport = createBillingReport();
 
       try {
-        const { result } = await runSyncCycle(this.config, this.githubCredential, {
+        const { result, dryRunPayloads } = await runSyncCycle(this.config, this.githubCredential, {
           billingReport,
-          allowMissingBilling: this.allowMissingBilling,
+          allowMissingBilling: this.options.allowMissingBilling,
+          dryRun: this.options.dryRun,
         });
-        onCycle?.(result, billingReport);
+        onCycle?.(result, billingReport, dryRunPayloads);
       } catch (error) {
         onError?.(error instanceof Error ? error : new Error(String(error)), billingReport);
       }

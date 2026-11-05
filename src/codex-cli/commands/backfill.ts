@@ -237,6 +237,73 @@ function usageKey(usage: CodexTokenUsage): string {
   ].join("|");
 }
 
+function usageKeyOf(event: ParsedCodexEvent): string {
+  return usageKey({
+    input_tokens: event.inputs,
+    output_tokens: event.outputs,
+    cached_input_tokens: event.cached,
+    reasoning_output_tokens: event.reasoning,
+    total_tokens: event.totalTokens,
+  });
+}
+
+export interface ResponseCompletedStamp {
+  usageKey: string;
+  timestampNanos: string;
+}
+
+export function parseTokenUsageRecord(line: string): ResponseCompletedStamp | null {
+  const parsed = JSON.parse(line) as {
+    type?: string;
+    timestamp?: string;
+    payload?: { usage?: CodexTokenUsage | null } | null;
+  };
+  if (parsed.type !== "token_usage_record") return null;
+  const usage = parsed.payload?.usage;
+  if (!usage) return null;
+  const timestampNanos = toUnixNanos(parsed.timestamp);
+  if (!timestampNanos) return null;
+  return { usageKey: usageKey(usage), timestampNanos };
+}
+
+export class ResponseStamps {
+  private readonly unclaimedByUsage = new Map<string, string[]>();
+  private readonly claimedByCall = new Map<string, string>();
+  private recorded = 0;
+
+  get isEmpty(): boolean {
+    return this.recorded === 0;
+  }
+
+  record(stamp: ResponseCompletedStamp): void {
+    this.recorded++;
+    const queue = this.unclaimedByUsage.get(stamp.usageKey);
+    if (queue) {
+      queue.push(stamp.timestampNanos);
+      return;
+    }
+    this.unclaimedByUsage.set(stamp.usageKey, [stamp.timestampNanos]);
+  }
+
+  claimFor(event: ParsedCodexEvent): string | undefined {
+    const claimed = event.callKey ? this.claimedByCall.get(event.callKey) : undefined;
+    if (claimed) return claimed;
+    const timestampNanos = this.unclaimedByUsage.get(usageKeyOf(event))?.shift();
+    if (timestampNanos && event.callKey) {
+      this.claimedByCall.set(event.callKey, timestampNanos);
+    }
+    return timestampNanos;
+  }
+}
+
+export function stampAtResponseCompleted(
+  event: ParsedCodexEvent,
+  responseStamps: ResponseStamps,
+): ParsedCodexEvent {
+  const timestampNanos = responseStamps.claimFor(event);
+  return timestampNanos ? { ...event, resolvedTimestampNanos: timestampNanos } : event;
+}
+
 export function parseTokenCountEvent(line: string, ctx: RolloutContext): ParsedCodexEvent | null {
   const parsed = JSON.parse(line) as {
     type?: string;
@@ -501,10 +568,10 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
   }
 
   console.log(
-    chalk.yellow(
+    chalk.dim(
       toml && hasDisabledExporter(toml)
-        ? "\nLive export is off in the current config, but this window can still cover days when it was on. Calls exported live back then are imported again as a second record. Set --since to the moment live export was turned off, and avoid counting them twice."
-        : "\nCodex exports usage to Revenium as calls happen. Calls in this window that were already exported live are imported again as a second record. Set --to to the exact moment live export was configured so the window ends before live data begins, and avoid counting them twice: a date-only --to covers that whole UTC day, including the calls exported live after setup.",
+        ? "\nLive export is off in the current config. Days in this window when it was on are covered too: a call Revenium already stored from live export is recognised as the same call and kept as one record."
+        : "\nCodex exports usage to Revenium as calls happen. A call in this window that live export already stored is recognised as the same call and kept as one record.",
     ),
   );
 
@@ -515,6 +582,7 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
   const events: ParsedCodexEvent[] = [];
   let malformed = 0;
   let legacyEventsSkipped = 0;
+  let filesWithoutResponseTime = 0;
   for (const filePath of files) {
     const stream = createReadStream(filePath);
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -526,6 +594,7 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
     };
     const tokenCountEvents: ParsedCodexEvent[] = [];
     const legacyCompletedEvents: ParsedCodexEvent[] = [];
+    const responseStamps = new ResponseStamps();
     let fileUsesTokenCountSchema = false;
     for await (const line of rl) {
       if (!line.trim()) continue;
@@ -544,11 +613,18 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
           }
           continue;
         }
+        const stamp = parseTokenUsageRecord(line);
+        if (stamp) {
+          responseStamps.record(stamp);
+          continue;
+        }
         const tokenCountEvent = parseTokenCountEvent(line, ctx);
         if (tokenCountEvent) {
           fileUsesTokenCountSchema = true;
         }
-        const event = tokenCountEvent ?? parseCompletedEvent(line, ctx);
+        const event = tokenCountEvent
+          ? stampAtResponseCompleted(tokenCountEvent, responseStamps)
+          : parseCompletedEvent(line, ctx);
         if (!event) continue;
         const ms = Number(event.resolvedTimestampNanos.slice(0, -6));
         if (!Number.isFinite(ms)) continue;
@@ -561,6 +637,9 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
     }
     rl.close();
     stream.destroy();
+    if (fileUsesTokenCountSchema && responseStamps.isEmpty) {
+      filesWithoutResponseTime++;
+    }
     if (fileUsesTokenCountSchema) {
       legacyEventsSkipped += legacyCompletedEvents.length;
       events.push(...tokenCountEvents);
@@ -590,6 +669,13 @@ export async function backfillAction(options: BackfillOptions = {}): Promise<voi
   }
   if (duplicateCount > 0) {
     console.log(`  Duplicates:      ${duplicateCount.toLocaleString()}`);
+  }
+  if (filesWithoutResponseTime > 0) {
+    console.log(
+      chalk.yellow(
+        `\n${filesWithoutResponseTime} rollout file(s) were written by Codex before 0.153.0 and carry no response time. A call from them that live export already stored is recognised only when its tools finished within five minutes of the live record; one whose tools ran longer is stored a second time.`,
+      ),
+    );
   }
   if (events.length === 0) {
     console.log(chalk.yellow("\nNo matching events found."));

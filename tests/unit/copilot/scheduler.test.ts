@@ -18,7 +18,12 @@ vi.mock("../../../src/copilot/core/sync/state-manager.js", () => ({
   saveState: (...args: unknown[]) => saveState(...args),
 }));
 
-import { runSyncCycle } from "../../../src/copilot/core/sync/scheduler.js";
+vi.mock("../../../src/_core/api/resilience.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/_core/api/resilience.js")>();
+  return { ...actual, startupStagger: vi.fn().mockResolvedValue(undefined) };
+});
+
+import { runSyncCycle, SyncWatcher } from "../../../src/copilot/core/sync/scheduler.js";
 import { createBillingReport } from "../../../src/copilot/core/billing-match.js";
 import { computeBreakdownHash } from "../../../src/copilot/core/sync/deduplicator.js";
 import { SentRecordLog, utcDayKey } from "../../../src/_core/sync/sent-record-log.js";
@@ -27,6 +32,7 @@ import type {
   CopilotConfig,
   CopilotUsageBreakdown,
   CopilotUsageDay,
+  SyncResult,
   SyncState,
 } from "../../../src/copilot/types.js";
 import type { OTLPTracesPayload } from "../../../src/_core/types/index.js";
@@ -708,5 +714,76 @@ describe("runSyncCycle delivery guarantees", () => {
     expect(dryRunPayloads).toHaveLength(1);
     expect(saveState).not.toHaveBeenCalled();
     expect(sendTracesWithResult).not.toHaveBeenCalled();
+  });
+});
+
+describe("SyncWatcher dry run", () => {
+  async function runOneCycle(options: { dryRun?: boolean; allowMissingBilling?: boolean }) {
+    const watcher = new SyncWatcher(CONFIG, CREDENTIAL, options);
+    const cycles: { result: SyncResult; dryRunPayloads?: object[] }[] = [];
+    const errors: Error[] = [];
+
+    await watcher.start(
+      (result, _billingReport, dryRunPayloads) => {
+        cycles.push({ result, dryRunPayloads });
+        watcher.stop();
+      },
+      (error) => {
+        errors.push(error);
+        watcher.stop();
+      },
+    );
+
+    return { cycles, errors };
+  }
+
+  it("a dry-run watch cycle sends nothing and writes no state", async () => {
+    yieldDays([DAY]);
+
+    const { cycles } = await runOneCycle({ dryRun: true });
+
+    expect(sendTracesWithResult).not.toHaveBeenCalled();
+    expect(saveState).not.toHaveBeenCalled();
+    expect(cycles[0].dryRunPayloads).toHaveLength(1);
+  });
+
+  it("a dry-run watch cycle that fails mid-run still writes no state", async () => {
+    fetchUsageDays.mockImplementation(async function* () {
+      yield { days: [DAY], unmatchedBilling: [], billingUnavailable: [] };
+      throw new Error("github unreachable");
+    });
+
+    const { errors } = await runOneCycle({ dryRun: true });
+
+    expect(errors[0].message).toBe("github unreachable");
+    expect(sendTracesWithResult).not.toHaveBeenCalled();
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it("a dry-run watch cycle that fetches nothing reports no events and writes no state", async () => {
+    yieldDays([]);
+
+    const { cycles } = await runOneCycle({ dryRun: true });
+
+    expect(cycles[0].result.fetched).toBe(0);
+    expect(cycles[0].result.sent).toBe(0);
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it("forwards allowMissingBilling to the sync cycle", async () => {
+    yieldDays([DAY]);
+    sendTracesWithResult.mockResolvedValue({ success: true });
+
+    await runOneCycle({ allowMissingBilling: true });
+
+    expect(fetchUsageDays).toHaveBeenCalledWith(
+      CREDENTIAL.token,
+      CREDENTIAL.orgName,
+      expect.any(String),
+      expect.any(String),
+      { allowMissingBilling: true },
+    );
+    expect(sendTracesWithResult).toHaveBeenCalled();
+    expect(saveState).toHaveBeenCalled();
   });
 });

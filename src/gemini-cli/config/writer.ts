@@ -28,7 +28,10 @@ export async function writeConfig(config: GeminiCliConfig): Promise<string> {
   const configPath = getConfigFilePath();
 
   await mkdir(getGeminiConfigDir(), { recursive: true, mode: 0o700 });
-  await writeFile(configPath, generateEnvContent(config), { encoding: "utf-8" });
+  await writeFile(configPath, generateEnvContent(config), {
+    encoding: "utf-8",
+    mode: CONFIG_FILE_MODE,
+  });
   await chmod(configPath, CONFIG_FILE_MODE);
 
   return configPath;

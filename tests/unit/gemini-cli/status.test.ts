@@ -18,6 +18,7 @@ import { statusCommand } from "../../../src/gemini-cli/commands/status.js";
 import { loadConfig } from "../../../src/gemini-cli/config/loader.js";
 import { isProfileConfigured } from "../../../src/_core/shell/profile-updater.js";
 import { SHELL_PROFILE_MARKER } from "../../../src/gemini-cli/constants.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
 
 const baseConfig = {
   apiKey: "hak_testkey123",
@@ -55,6 +56,14 @@ describe("statusCommand", () => {
     await statusCommand();
 
     expect(logged.join("\n")).not.toContain("Configuration is outdated");
+  });
+
+  it("never prints the full API key", async () => {
+    await statusCommand();
+
+    const output = logged.join("\n");
+    expect(output).not.toContain(baseConfig.apiKey);
+    expect(output).toContain(maskApiKey(baseConfig.apiKey));
   });
 
   it("checks the profile for the wrapper launcher rather than the loaded environment", async () => {

@@ -215,6 +215,21 @@ describe("cursor backfill exit status", () => {
     expect(output()).toContain("Re-run the same window to finish the import");
   });
 
+  it("sends an event repeated across overlapping pages once", async () => {
+    const [first, repeated, last] = [1700000000000, 1700000001000, 1700000002000].map((timestamp) =>
+      createUsageEvent({ kind: "Usage-based", timestamp }),
+    );
+    vi.mocked(fetchEvents).mockImplementation(async function* () {
+      yield [first, repeated];
+      yield [structuredClone(repeated), last];
+    });
+    vi.mocked(sendLogsWithResult).mockResolvedValue({ success: true });
+
+    await backfillCommand({});
+
+    expect(sentRecordCounts().reduce((sum, count) => sum + count, 0)).toBe(3);
+  });
+
   it("fails a dry run that stopped fetching midway", async () => {
     vi.mocked(fetchEvents).mockImplementation(async function* () {
       yield [createUsageEvent({ kind: "Usage-based", timestamp: 1700000000000 })];

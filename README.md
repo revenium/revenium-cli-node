@@ -29,7 +29,7 @@ Claude Code telemetry carries `revenium.middleware.source`, so its deployment ro
 - **Interactive Setup Wizard** - Guided configuration that scopes credentials to the assistant that needs them
 - **OTLP Telemetry** - Standard OpenTelemetry log format with retry logic and exponential backoff
 - **Historical Backfill** - Import past usage data with batch processing, dry-run mode, and date filtering
-- **Cursor Sync Engine** - Continuous sync with SHA-256 deduplication, state persistence, and process locking (deprecated, removed in `2.0.0`)
+- **Cursor Sync Engine** - Continuous sync with SHA-256 deduplication, state persistence, and process locking (deprecated, will be removed in `3.0.0`)
 - **Shell Management** - Auto-detection (bash/zsh/fish) and profile modification with timestamped backups, used to install the Gemini CLI wrapper
 - **Security** - PII masking, restricted file permissions (0o600), safe shell escaping
 - **Programmatic API** - Validation, OTLP client, health checks, masking, and shell detection
@@ -308,7 +308,7 @@ revenium-cursor test                # Send test metric
 revenium-cursor backfill --since 28d
 ```
 
-`revenium-cursor sync` and `sync --watch` are deprecated and will be removed in `2.0.0`. Ongoing metering comes from the dashboard provider credential. `backfill`, `status`, `test` and `reset` are unaffected.
+`revenium-cursor sync` and `sync --watch` are deprecated and will be removed in `3.0.0`. Ongoing metering comes from the dashboard provider credential. `backfill`, `status`, `test` and `reset` are unaffected.
 
 ### Quick Start - GitHub Copilot
 
@@ -333,7 +333,7 @@ revenium-copilot backfill --since 28d
 
 The equivalent `--github-token` / `--github-org` flags remain available for environments that cannot set variables.
 
-`revenium-copilot sync` and `sync --watch` are deprecated and will be removed in `2.0.0`. Ongoing metering comes from the dashboard provider credential.
+`revenium-copilot sync` and `sync --watch` are deprecated and will be removed in `3.0.0`. Ongoing metering comes from the dashboard provider credential.
 
 ### Quick Start - Codex CLI
 
@@ -357,7 +357,7 @@ revenium-codex test                  # Send test metric
 revenium-codex backfill --since 7d   # Import historical sessions
 ```
 
-Codex exports usage to Revenium as calls happen, so calls inside the backfill window that were already exported live are imported a second time. Set `--to` to the exact moment live export was configured, so the window ends before live data begins and those calls are not counted twice. A date-only `--to` covers that whole UTC day, including the calls exported live after setup.
+Codex exports usage to Revenium as calls happen. A call inside the backfill window that live export already stored is recognised as the same call and kept as one record, so the window may overlap live data. See the `backfill` section under OpenAI Codex CLI for the one case that is still stored twice.
 
 ## Command Reference
 
@@ -514,7 +514,7 @@ Sends a test OTLP metric.
 
 #### `sync` (deprecated)
 
-Syncs Cursor usage events to Revenium. Deprecated and removed in `2.0.0`; register the Cursor credential under Connections > Providers in the Revenium dashboard instead.
+Syncs Cursor usage events to Revenium. Deprecated and will be removed in `3.0.0`; register the Cursor credential under Connections > Providers in the Revenium dashboard instead.
 
 | Option          | Description                         |
 | --------------- | ----------------------------------- |
@@ -690,7 +690,9 @@ Sends a test OTLP metric.
 
 Imports historical Codex usage sessions from `$CODEX_HOME/sessions/` (`~/.codex/sessions/` when `CODEX_HOME` is unset).
 
-Codex exports usage to Revenium as calls happen, and the import does not reconcile against what live export already sent: calls inside the window that were exported live are stored a second time. Narrow `--since` to the period before live export was configured. Re-running the same window is not a second count — every call is re-sent with the `transaction_id` it already had.
+Codex exports usage to Revenium as calls happen. A call inside the window that live export already stored is recognised by Revenium as the same call and kept as one record, so the window may overlap live data. Re-running the same window is not a second count either: every call is re-sent with the `transaction_id` it already had.
+
+Each call is stamped at the moment its response completed, read from the `token_usage_record` line that Codex 0.153.0 and later write to the rollout. Rollouts written by earlier Codex versions only carry the `token_count` line, which Codex writes after the call's tools have finished, and Revenium recognises such a call only when that time falls within five minutes of the live record. A call from one of those rollouts whose tools ran longer, such as a command left waiting for approval, is stored a second time.
 
 | Option                      | Description                              |
 | --------------------------- | ---------------------------------------- |

@@ -204,6 +204,14 @@ describe("buildOtlpPayload", () => {
     );
   });
 
+  it("emits a breakdown's cost as cost_usd", () => {
+    const day = createCopilotUsageDay({ breakdown: [createCopilotBreakdown({ cost_usd: 2.5 })] });
+    const attrs = buildOtlpPayload([day], createCopilotConfig()).resourceSpans[0].scopeSpans[0]
+      .spans[0].attributes;
+
+    expect(attrs.find((a) => a.key === "cost_usd")?.value.doubleValue).toBe(2.5);
+  });
+
   it("gives two surfaces of one developer distinct transaction ids", () => {
     const day = createCopilotUsageDay({
       breakdown: [

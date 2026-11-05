@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, rm, access } from "node:fs/promises";
+import { mkdtemp, readFile, rm, access, chmod, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,11 @@ vi.mock("../../../src/cursor/config/loader.js", () => ({
 
 import { writeConfig } from "../../../src/cursor/config/writer.js";
 import { parseEnvContent } from "../../../src/_core/config/loader.js";
+import {
+  CONFIG_FILE_MODE,
+  REVENIUM_ENV_FILE,
+  REVENIUM_FISH_FILE,
+} from "../../../src/_core/constants.js";
 import { createCursorConfig } from "../../helpers/fixtures.js";
 import {
   HOSTILE_SHELL_VALUES,
@@ -32,6 +37,22 @@ describe("cursor writeConfig", () => {
 
   afterEach(async () => {
     await rm(configDir.current, { recursive: true, force: true });
+  });
+
+  it("restricts a revenium.env and revenium.fish an earlier release left readable to the owner", async () => {
+    const legacyPaths = [REVENIUM_ENV_FILE, REVENIUM_FISH_FILE].map((file) =>
+      join(configDir.current, file),
+    );
+    for (const path of legacyPaths) {
+      await writeFile(path, "");
+      await chmod(path, 0o644);
+    }
+
+    await writeConfig(createCursorConfig());
+
+    for (const path of legacyPaths) {
+      expect((await stat(path)).mode & 0o777).toBe(CONFIG_FILE_MODE);
+    }
   });
 
   it("exports every value quoted", async () => {

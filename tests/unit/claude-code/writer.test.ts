@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   generateEnvContent,
   getConfigFilePath,
@@ -10,6 +10,7 @@ import {
 } from "../../../src/claude-code/config/writer.js";
 import { buildClaudeCodeEnv, TELEMETRY_ENV_KEYS } from "../../../src/claude-code/config/env.js";
 import { parseEnvContent } from "../../../src/_core/config/loader.js";
+import { CONFIG_FILE_MODE } from "../../../src/_core/constants.js";
 import type { ClaudeCodeConfig } from "../../../src/claude-code/config/loader.js";
 
 const minimalConfig: ClaudeCodeConfig = {
@@ -270,5 +271,16 @@ describe("writeConfig", () => {
     await writeConfig(minimalConfig);
 
     expect(existsSync(fishPath)).toBe(false);
+  });
+
+  it("restricts a revenium.env an earlier release left readable to the owner", async () => {
+    const envPath = getConfigFilePath();
+    await mkdir(dirname(envPath), { recursive: true });
+    await writeFile(envPath, "");
+    await chmod(envPath, 0o644);
+
+    await writeConfig(minimalConfig);
+
+    expect((await stat(envPath)).mode & 0o777).toBe(CONFIG_FILE_MODE);
   });
 });

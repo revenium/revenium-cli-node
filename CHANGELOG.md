@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-11-05
+
+### Changed
+
+- `revenium-codex backfill` stamps each call at the moment its response completed, read from the
+  `token_usage_record` line that Codex 0.153.0 and later write to the rollout, instead of the
+  `token_count` line Codex writes after the call's tools have finished. The `transaction_id` of
+  every call is unchanged, so a re-run of an earlier import still re-sends the ids it already had.
+  Rollouts from earlier Codex versions keep the `token_count` time, and the backfill says how many
+  such files it scanned, since a call from them is still stored twice when its tools ran longer
+  than five minutes after live export stored it. That count covers every pre-0.153.0 rollout on
+  disk, not only the ones the `--since` and `--to` window selected calls from.
+- `revenium-codex backfill` no longer warns that calls already exported live are imported a second
+  time, and no longer asks for `--to` or `--since` to be cut at the moment live export was
+  configured: Revenium recognises a call that arrived live and then by backfill as one call. The
+  one case still stored twice, a pre-0.153.0 rollout whose call's tools ran longer than five
+  minutes, is documented in the README.
+
+### Fixed
+
+- The README said `revenium-cursor sync` and `revenium-copilot sync` were removed in `2.0.0`, in
+  two of the four places as a past fact, so anyone reading it concluded a command that still runs
+  had been dropped. The 2.0.0 release deferred that removal to `3.0.0` and moved the runtime
+  notice with it; the README now says `3.0.0` everywhere it mentions the removal.
+
 ## [2.0.0] - 2026-10-23
 
 ### Deprecated
@@ -628,6 +653,7 @@ Maintenance release. No functional changes to the CLI.
 - OTLP telemetry format for usage data transmission
 - 106 unit and integration tests
 
+[2.1.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v2.1.0
 [2.0.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v2.0.0
 [1.3.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.3.0
 [1.2.0]: https://github.com/revenium/revenium-cli-node/releases/tag/v1.2.0

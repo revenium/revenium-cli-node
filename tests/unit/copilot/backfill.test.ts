@@ -98,6 +98,19 @@ describe("copilot backfill streaming", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("sends a breakdown repeated across overlapping fetches once", async () => {
+    const overlappingFetch = () =>
+      usageFetch([createCopilotUsageDay({ day: "2024-06-15", breakdown: breakdowns(3, "a") })]);
+    vi.mocked(fetchUsageDays).mockImplementation(async function* () {
+      yield overlappingFetch();
+      yield overlappingFetch();
+    });
+
+    await backfillCommand(CREDENTIALS);
+
+    expect(sentSpanCounts().reduce((sum, count) => sum + count, 0)).toBe(3);
+  });
+
   it("delivers the days fetched before a later day fails", async () => {
     vi.mocked(fetchUsageDays).mockImplementation(async function* () {
       yield usageFetch([

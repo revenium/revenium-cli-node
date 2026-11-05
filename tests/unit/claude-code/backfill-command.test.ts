@@ -65,24 +65,46 @@ const config: ClaudeCodeConfig = {
   email: "user@example.com",
 };
 
+interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
 interface SessionLineOptions {
   caller?: { type: string };
   cwd?: string;
   sessionId?: string;
+  requestId?: string;
+  messageId?: string;
+  timestamp?: string;
+  usage?: SessionUsage;
+  stopReason?: string;
 }
 
-function sessionLine({ caller, cwd, sessionId = "session-abc" }: SessionLineOptions = {}): string {
+function sessionLine({
+  caller,
+  cwd,
+  sessionId = "session-abc",
+  requestId = `req_${sessionId}`,
+  messageId = `msg_${sessionId}`,
+  timestamp = "2024-06-01T12:00:00.000Z",
+  usage = { input_tokens: 100, output_tokens: 50 },
+  stopReason,
+}: SessionLineOptions = {}): string {
   return JSON.stringify({
     type: "assistant",
     sessionId,
     cwd,
-    requestId: `req_${sessionId}`,
-    timestamp: "2024-06-01T12:00:00.000Z",
+    requestId,
+    timestamp,
     costUSD: 0.1234,
     message: {
-      id: `msg_${sessionId}`,
+      id: messageId,
       model: "claude-3-5-sonnet-20241022",
-      usage: { input_tokens: 100, output_tokens: 50 },
+      usage,
+      stop_reason: stopReason,
       content: [{ type: "tool_use", name: "Skill", input: { skill: SKILL_NAME }, caller }],
     },
   });
@@ -102,6 +124,29 @@ async function writeClaudeSettings(logToolDetails?: string): Promise<void> {
 
 function sentPayload(): OTLPLogsPayload {
   return vi.mocked(sendLogsWithResult).mock.calls[0][2];
+}
+
+type SentLogRecord =
+  OTLPLogsPayload["resourceLogs"][number]["scopeLogs"][number]["logRecords"][number];
+
+function sentLogRecords(): SentLogRecord[] {
+  return vi
+    .mocked(sendLogsWithResult)
+    .mock.calls.flatMap(([, , payload]) =>
+      payload.resourceLogs.flatMap((resource) =>
+        resource.scopeLogs.flatMap((scope) => scope.logRecords),
+      ),
+    );
+}
+
+async function importSessionLines(lines: string[], options?: BackfillOptions): Promise<void> {
+  await writeClaudeSettings();
+  await writeFile(
+    join(homeState.dir, ".claude", "projects", "acme", "session-abc.jsonl"),
+    lines.join("\n") + "\n",
+  );
+
+  await backfillCommand(options);
 }
 
 beforeEach(async () => {
@@ -249,19 +294,11 @@ describe("backfillCommand — which projects an import carries", () => {
   }
 
   function sentSessionIds(): string[] {
-    return vi
-      .mocked(sendLogsWithResult)
-      .mock.calls.flatMap(([, , payload]) =>
-        payload.resourceLogs.flatMap((resource) =>
-          resource.scopeLogs.flatMap((scope) =>
-            scope.logRecords.flatMap((record) =>
-              record.attributes
-                .filter((attribute) => attribute.key === "session.id")
-                .map((attribute) => String(attribute.value.stringValue)),
-            ),
-          ),
-        ),
-      );
+    return sentLogRecords().flatMap((record) =>
+      record.attributes
+        .filter((attribute) => attribute.key === "session.id")
+        .map((attribute) => String(attribute.value.stringValue)),
+    );
   }
 
   async function expectExitCode1(options: BackfillOptions): Promise<void> {
@@ -405,13 +442,7 @@ describe("backfillCommand — skill origin of an imported session", () => {
   async function importSession(caller?: {
     type: string;
   }): Promise<Array<{ key: string; value: { stringValue?: string } }>> {
-    await writeClaudeSettings();
-    await writeFile(
-      join(homeState.dir, ".claude", "projects", "acme", "session-abc.jsonl"),
-      sessionLine({ caller }) + "\n",
-    );
-
-    await backfillCommand();
+    await importSessionLines([sessionLine({ caller })]);
 
     const activation = sentPayload().resourceLogs[0].scopeLogs[0].logRecords.find(
       (record) => record.body.stringValue === "claude_code.skill_activated",
@@ -437,5 +468,92 @@ describe("backfillCommand — skill origin of an imported session", () => {
 
     expect(attributes.some((attribute) => attribute.key === "invocation_trigger")).toBe(false);
     expect(attributes.some((attribute) => attribute.key === "skill.source")).toBe(false);
+  });
+});
+
+describe("backfillCommand — session line to the wire", () => {
+  async function sentApiRequests(
+    lines: string[],
+    options?: BackfillOptions,
+  ): Promise<Array<Record<string, string | undefined>>> {
+    await importSessionLines(lines, options);
+
+    return sentLogRecords()
+      .filter((record) => record.body.stringValue === "claude_code.api_request")
+      .map((record) =>
+        Object.fromEntries(
+          record.attributes.map((attribute) => [attribute.key, attribute.value.stringValue]),
+        ),
+      );
+  }
+
+  it("sends one record per call, taken from its final streaming snapshot", async () => {
+    const snapshot = { requestId: "req_live", messageId: "msg_live" };
+
+    const records = await sentApiRequests([
+      sessionLine({
+        ...snapshot,
+        timestamp: "2024-06-01T12:00:00.000Z",
+        usage: { input_tokens: 100, output_tokens: 1 },
+      }),
+      sessionLine({
+        ...snapshot,
+        timestamp: "2024-06-01T12:00:02.000Z",
+        usage: { input_tokens: 100, output_tokens: 250 },
+        stopReason: "end_turn",
+      }),
+    ]);
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        request_id: "req_live",
+        "message.id": "msg_live",
+        output_tokens: "250",
+        stop_reason: "end_turn",
+      }),
+    ]);
+  });
+
+  it("books cache reads and cache writes under their own counts", async () => {
+    const records = await sentApiRequests([
+      sessionLine({
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 4000,
+          cache_creation_input_tokens: 300,
+        },
+      }),
+    ]);
+
+    expect(records).toEqual([
+      expect.objectContaining({ cache_read_tokens: "4000", cache_creation_tokens: "300" }),
+    ]);
+  });
+
+  it("sends nothing older than --since and no zero-token line", async () => {
+    const records = await sentApiRequests(
+      [
+        sessionLine({
+          requestId: "req_before_window",
+          messageId: "msg_before_window",
+          timestamp: "2024-05-31T23:59:00.000Z",
+        }),
+        sessionLine({
+          requestId: "req_zero_tokens",
+          messageId: "msg_zero_tokens",
+          timestamp: "2024-06-01T11:00:00.000Z",
+          usage: { input_tokens: 0, output_tokens: 0 },
+        }),
+        sessionLine({
+          requestId: "req_in_window",
+          messageId: "msg_in_window",
+          timestamp: "2024-06-01T12:00:00.000Z",
+        }),
+      ],
+      { since: "2024-06-01" },
+    );
+
+    expect(records).toEqual([expect.objectContaining({ request_id: "req_in_window" })]);
   });
 });

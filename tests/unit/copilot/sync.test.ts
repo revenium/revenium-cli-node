@@ -217,10 +217,15 @@ describe("copilot syncCommand exit status", () => {
   });
 
   describe("watch mode", () => {
-    type CycleHandler = (result: SyncResult, billingReport: BillingReport) => void;
+    type CycleHandler = (
+      result: SyncResult,
+      billingReport: BillingReport,
+      dryRunPayloads?: object[],
+    ) => void;
     type ErrorHandler = (error: Error, billingReport: BillingReport) => void;
+    type SyncCommandOptions = Parameters<typeof syncCommand>[0];
 
-    function startWatcher(): Promise<CycleHandler> {
+    function startWatcher(options: SyncCommandOptions = {}): Promise<CycleHandler> {
       return new Promise((resolveHandler) => {
         vi.mocked(SyncWatcher).mockImplementation(function () {
           return {
@@ -230,7 +235,7 @@ describe("copilot syncCommand exit status", () => {
             stop: vi.fn(),
           };
         } as unknown as typeof SyncWatcher);
-        void syncCommand({ watch: true });
+        void syncCommand({ watch: true, ...options });
       });
     }
 
@@ -296,6 +301,32 @@ describe("copilot syncCommand exit status", () => {
       const onCycle = await startWatcher();
 
       onCycle(syncResult({ sent: 1 }), billingReport(0));
+      await shutdown();
+
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    });
+
+    it("forwards --dry-run to the watcher", async () => {
+      await startWatcher({ dryRun: true });
+
+      expect(vi.mocked(SyncWatcher).mock.calls[0][2]).toMatchObject({ dryRun: true });
+    });
+
+    it("announces dry-run mode and prints the previewed payloads", async () => {
+      const onCycle = await startWatcher({ dryRun: true });
+
+      onCycle(syncResult({ sent: 2 }), billingReport(0), [{ resourceSpans: [] }]);
+
+      const lines = logSpy.mock.calls.map(([line]) => String(line));
+      expect(lines.some((line) => line.includes("no data will be sent"))).toBe(true);
+      expect(lines.some((line) => line.includes("OTLP payload(s):"))).toBe(true);
+      expect(lines.some((line) => line.includes("resourceSpans"))).toBe(true);
+    });
+
+    it("exits zero when a dry-run cycle withheld records", async () => {
+      const onCycle = await startWatcher({ dryRun: true });
+
+      onCycle(syncResult({ sent: 1 }), billingReport(3));
       await shutdown();
 
       expect(exitSpy).toHaveBeenCalledWith(0);

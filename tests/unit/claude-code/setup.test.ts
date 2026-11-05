@@ -19,7 +19,10 @@ vi.mock("../../../src/_core/api/health-check.js", () => ({
 }));
 
 import { setupCommand } from "../../../src/claude-code/commands/setup.js";
+import { program } from "../../../src/claude-code/cli/index.js";
 import { checkEndpointHealth } from "../../../src/_core/api/health-check.js";
+import { parseEnvContent } from "../../../src/_core/config/loader.js";
+import { maskApiKey } from "../../../src/_core/utils/masking.js";
 import inquirer from "inquirer";
 import { stubTty, restoreTty } from "../../helpers/tty.js";
 
@@ -122,6 +125,16 @@ describe("claude-code setupCommand — key scope", () => {
     expect(await readFile(join(home, ".claude", "revenium.env"), "utf-8")).toContain(WRITE_KEY);
   });
 
+  it("never prints the full API key", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await setupCommand({ apiKey: API_KEY, endpoint: "https://api.revenium.ai" });
+
+    const output = log.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).not.toContain(API_KEY);
+    expect(output).toContain(maskApiKey(API_KEY));
+  });
+
   it("asks for a metering key in the interactive prompt", async () => {
     stubTty(true);
     vi.mocked(inquirer.prompt).mockResolvedValue({
@@ -180,6 +193,34 @@ describe("claude-code setupCommand — key scope", () => {
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(checkEndpointHealth).not.toHaveBeenCalled();
+  });
+});
+
+describe("claude-code setup through the command line — tool-details opt-out", () => {
+  async function runSetup(extraArgs: string[]) {
+    await program.parseAsync(
+      ["setup", "--api-key", API_KEY, "--endpoint", "https://api.revenium.ai", ...extraArgs],
+      { from: "user" },
+    );
+    const claudeDir = join(home, ".claude");
+    return {
+      env: parseEnvContent(await readFile(join(claudeDir, "revenium.env"), "utf-8")),
+      settings: JSON.parse(await readFile(join(claudeDir, "settings.json"), "utf-8")),
+    };
+  }
+
+  it("writes tool details off in both files when --no-log-tool-details is passed", async () => {
+    const { env, settings } = await runSetup(["--no-log-tool-details"]);
+
+    expect(env.OTEL_LOG_TOOL_DETAILS).toBe("0");
+    expect(settings.env.OTEL_LOG_TOOL_DETAILS).toBe("0");
+  });
+
+  it("writes tool details on in both files when the flag is absent", async () => {
+    const { env, settings } = await runSetup([]);
+
+    expect(env.OTEL_LOG_TOOL_DETAILS).toBe("1");
+    expect(settings.env.OTEL_LOG_TOOL_DETAILS).toBe("1");
   });
 });
 
